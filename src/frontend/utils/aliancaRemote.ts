@@ -1,9 +1,10 @@
 import { initializeApp, type FirebaseApp } from "firebase/app"
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth } from "firebase/auth"
-import { getDatabase, onValue, ref, type Database } from "firebase/database"
+import { getDatabase, onValue, ref, set, type Database } from "firebase/database"
 import { get } from "svelte/store"
 import { uid } from "uid"
 import { Main } from "../../types/IPC/Main"
+import { OutputHelper } from "../components/helpers/OutputHelper"
 import { requestMain, sendMain } from "../IPC/main"
 import { folders, media, mediaFolders, projects, shows } from "../stores"
 import { save } from "./save"
@@ -40,6 +41,7 @@ let app: FirebaseApp | null = null
 let auth: Auth | null = null
 let db: Database | null = null
 let pararOuvinte: (() => void) | null = null
+let pararComandos: (() => void) | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
 const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
@@ -74,10 +76,14 @@ function iniciar() {
         estado.entrando = false
         avisar()
 
-        if (usuario) ouvirCultos()
-        else {
+        if (usuario) {
+            ouvirCultos()
+            ouvirComandos()
+        } else {
             pararOuvinte?.()
             pararOuvinte = null
+            pararComandos?.()
+            pararComandos = null
         }
     })
 }
@@ -132,7 +138,6 @@ function enfileirar(cultos: { [id: string]: any }) {
     proximaFoto = cultos
     if (sincronizando) return
     sincronizando = true
-
     ;(async () => {
         try {
             while (proximaFoto) {
@@ -160,6 +165,54 @@ function ouvirCultos() {
             console.error("Falha ao ler os cultos:", erro)
             estado.erro = "Sem acesso aos cultos. Confira a conta."
             avisar()
+        }
+    )
+}
+
+/**
+ * Controle remoto pela internet.
+ *
+ * O FreeShow ja traz um controle remoto embutido, mas ele exige que o celular
+ * alcance o computador pela rede local -- e a rede da igreja costuma bloquear
+ * isso. Aqui o comando passa pelo Firebase, que os dois lados ja alcancam.
+ *
+ * O proprio FreeShow tem um caminho parecido em remoteController.ts, so que
+ * apontando para o banco do projeto original. Os comandos do culto passariam
+ * pelo servidor de outra pessoa, entao este usa o banco da propria igreja, com
+ * a conexao que ja existe e ja esta autenticada.
+ *
+ * Um campo so, sobrescrito a cada toque: nao interessa historico de comando, e
+ * fila seria pior -- passar dois slides por acumulo de atraso e mais confuso do
+ * que perder um toque. O campo e limpo assim que executa, para o mesmo comando
+ * nao repetir se o ouvinte reconectar.
+ */
+const COMANDOS: { [k: string]: () => void } = {
+    proximo: () => OutputHelper.advanceOutputs("next"),
+    anterior: () => OutputHelper.advanceOutputs("previous")
+}
+
+function ouvirComandos() {
+    if (!db || pararComandos) return
+
+    pararComandos = onValue(
+        ref(db!, "comando"),
+        (snap) => {
+            const valor = snap.val()
+            if (!valor?.acao) return
+
+            const executar = COMANDOS[valor.acao]
+            if (!executar) {
+                console.warn("Comando remoto desconhecido:", valor.acao)
+                return
+            }
+
+            executar()
+
+            // limpa para o mesmo toque nao repetir numa reconexao
+            set(ref(db!, "comando"), null).catch((erro) => console.error("Falha ao limpar o comando:", erro))
+        },
+        (erro) => {
+            console.error("Falha ao ouvir comandos remotos:", erro)
         }
     )
 }
