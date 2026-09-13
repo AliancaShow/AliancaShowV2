@@ -5,6 +5,10 @@ import { get } from "svelte/store"
 import { uid } from "uid"
 import { Main } from "../../types/IPC/Main"
 import { OutputHelper } from "../components/helpers/OutputHelper"
+import { clearAll } from "../components/output/clear"
+import { getActiveOutputs } from "../components/helpers/output"
+import { getSlideText } from "../components/edit/scripts/textStyle"
+import { outputs, outputDisplay, showsCache } from "../stores"
 import { requestMain, sendMain } from "../IPC/main"
 import { folders, media, mediaFolders, projects, shows } from "../stores"
 import { save } from "./save"
@@ -42,6 +46,7 @@ let auth: Auth | null = null
 let db: Database | null = null
 let pararOuvinte: (() => void) | null = null
 let pararComandos: (() => void) | null = null
+let pararEstado: (() => void) | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
 const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
@@ -79,11 +84,14 @@ function iniciar() {
         if (usuario) {
             ouvirCultos()
             ouvirComandos()
+            observarEstadoDaSaida()
         } else {
             pararOuvinte?.()
             pararOuvinte = null
             pararComandos?.()
             pararComandos = null
+            pararEstado?.()
+            pararEstado = null
         }
     })
 }
@@ -193,7 +201,11 @@ const VALIDADE_COMANDO = 30_000
 
 const COMANDOS: { [k: string]: () => void } = {
     proximo: () => OutputHelper.advanceOutputs("next"),
-    anterior: () => OutputHelper.advanceOutputs("previous")
+    anterior: () => OutputHelper.advanceOutputs("previous"),
+    // mesma acao do botao "Limpar tudo": alguem atravessa na frente do
+    // projetor, entra a midia errada -- e a funcao que se procura com pressa e
+    // a unica do transporte que faltava no celular
+    limpar: () => clearAll(true)
 }
 
 function ouvirComandos() {
@@ -230,6 +242,67 @@ function ouvirComandos() {
             console.error("Falha ao ouvir comandos remotos:", erro)
         }
     )
+}
+
+/**
+ * Publica o que esta acontecendo no computador, para o celular deixar de ser
+ * cego. Ate aqui o desktop so escrevia no banco para limpar comando: quem
+ * apertava o botao nao tinha como saber se o slide mudou -- o retorno era
+ * local, o celular acendia porque ele mesmo mandou acender.
+ *
+ * Com o indice publicado, o controle confirma o que de fato aconteceu, e a
+ * pessoa acompanha a letra sem ver o projetor.
+ *
+ * So escreve quando algo muda de verdade, e no maximo a cada meio segundo:
+ * segurar a seta para avancar varios slides dispararia uma escrita por slide.
+ */
+let ultimoEstado = ""
+let estadoAgendado: ReturnType<typeof setTimeout> | null = null
+
+function publicarEstado() {
+    if (!db || !estado.ligado) return
+
+    const saidaId = getActiveOutputs(get(outputs), true, true, true)[0]
+    const saida = get(outputs)[saidaId]?.out?.slide
+    const show = saida?.id ? get(showsCache)[saida.id] : null
+
+    const layout = show?.layouts?.[saida?.layout || show?.settings?.activeLayout || ""]
+    const total = layout?.slides?.length || 0
+    const indice = typeof saida?.index === "number" ? saida.index : -1
+
+    const slide = indice >= 0 && saida?.id ? show?.slides?.[layout?.slides?.[indice]?.id || ""] : null
+    const texto = slide ? getSlideText(slide).slice(0, 200) : ""
+
+    const novo = {
+        noAr: !!get(outputDisplay),
+        show: show?.name || "",
+        indice,
+        total,
+        texto,
+        em: Date.now()
+    }
+
+    // "em" muda sempre, entao fica fora da comparacao
+    const assinatura = JSON.stringify({ ...novo, em: 0 })
+    if (assinatura === ultimoEstado) return
+    ultimoEstado = assinatura
+
+    if (estadoAgendado) return
+    estadoAgendado = setTimeout(() => {
+        estadoAgendado = null
+        set(ref(db!, "estado"), novo).catch((erro) => console.error("Falha ao publicar o estado:", erro))
+    }, 500)
+}
+
+function observarEstadoDaSaida() {
+    if (pararEstado) return
+    // outputs cobre troca de slide e de show; outputDisplay cobre entrar e sair do ar
+    const a = outputs.subscribe(() => publicarEstado())
+    const b = outputDisplay.subscribe(() => publicarEstado())
+    pararEstado = () => {
+        a()
+        b()
+    }
 }
 
 /** garante uma pasta pelo caminho, devolvendo o id da ultima */
