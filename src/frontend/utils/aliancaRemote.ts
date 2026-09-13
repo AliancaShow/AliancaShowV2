@@ -186,6 +186,11 @@ function ouvirCultos() {
  * que perder um toque. O campo e limpo assim que executa, para o mesmo comando
  * nao repetir se o ouvinte reconectar.
  */
+/** Depois disto o comando e considerado perdido. Folgado o bastante para
+ *  aguentar internet ruim e relogio de celular fora de hora, curto o bastante
+ *  para nao ressuscitar um toque de horas atras. */
+const VALIDADE_COMANDO = 30_000
+
 const COMANDOS: { [k: string]: () => void } = {
     proximo: () => OutputHelper.advanceOutputs("next"),
     anterior: () => OutputHelper.advanceOutputs("previous")
@@ -199,6 +204,16 @@ function ouvirComandos() {
         (snap) => {
             const valor = snap.val()
             if (!valor?.acao) return
+
+            // So obedece comando recente. onValue dispara com o que ja estava
+            // no banco assim que conecta, entao um toque dado com o computador
+            // desligado seria executado na abertura do app -- o slide pularia
+            // sozinho no domingo de manha. Passado o prazo, limpa sem executar.
+            const idade = Date.now() - (valor.em || 0)
+            if (idade > VALIDADE_COMANDO) {
+                set(ref(db!, "comando"), null).catch(() => {})
+                return
+            }
 
             const executar = COMANDOS[valor.acao]
             if (!executar) {
