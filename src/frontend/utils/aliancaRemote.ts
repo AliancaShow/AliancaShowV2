@@ -643,6 +643,15 @@ function garantirEstruturaCompleta() {
  * por aqui.
  */
 let vindosDoRemote: { [culto: string]: string[] } = {}
+
+/**
+ * Qual entrada do banco gerou cada item do projeto, culto a culto.
+ *
+ * Fica so na memoria: e reconstruido a cada sincronizacao, e sem ele nao da
+ * para saber qual item do celular apagar quando o operador tira um do culto
+ * aqui no computador.
+ */
+let chavesPorRef: { [culto: string]: { [ref: string]: string } } = {}
 let registroCarregado = false
 
 async function carregarRegistro() {
@@ -704,7 +713,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
     const incompletos = new Set<string>()
 
     for (const [cultoId, culto] of Object.entries(cultos)) {
-        const itens = Object.values((culto as any)?.itens || {}) as any[]
+        const itens = Object.entries((culto as any)?.itens || {}).map(([chave, item]: any) => ({ ...item, chaveNoBanco: chave }))
         if (!itens.length) continue
 
         const partes = caminhoDoculto(cultoId)
@@ -720,11 +729,19 @@ async function sincronizar(cultos: { [id: string]: any }) {
         const daqui: string[] = []
         pedidos[cultoId] = daqui
 
+        // de qual entrada do banco veio cada id do projeto: e o que permite
+        // apagar no celular o item que o operador tirou do culto aqui
+        const chaves: { [ref: string]: string } = {}
+        const anotar = (ref: string) => {
+            if (ref) chaves[ref] = item.chaveNoBanco
+        }
+
         for (const item of itens) {
             if (item.tipo === "biblia") {
                 const showId = await criarShowDeVersiculo(item, projetoId)
                 if (showId) {
                     daqui.push(showId)
+                    anotar(showId)
                     if (adicionarAoProjeto(projetoId, { id: showId, type: "show" }, showId)) mudou = true
                 }
                 continue
@@ -734,12 +751,16 @@ async function sincronizar(cultos: { [id: string]: any }) {
             // esta no projeto -- so precisa entrar no registro, para que apagar
             // pelo celular tire do projeto como qualquer outro.
             if (item.tipo === "local") {
-                if (item.ref) daqui.push(item.ref)
+                if (item.ref) {
+                    daqui.push(item.ref)
+                    anotar(item.ref)
+                }
                 continue
             }
 
             if (item.tipo === "musica") {
                 daqui.push(item.showId)
+                anotar(item.showId)
                 if (adicionarAoProjeto(projetoId, { id: item.showId, type: "show" }, item.showId)) mudou = true
                 continue
             }
@@ -762,6 +783,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
                 continue
             }
             daqui.push(caminhoLocal)
+            anotar(caminhoLocal)
 
             const tipoProjeto = item.tipo === "image" ? "image" : item.tipo === "video" ? "video" : "audio"
             if (adicionarAoProjeto(projetoId, { id: caminhoLocal, type: tipoProjeto, name: item.nome }, caminhoLocal)) {
@@ -772,6 +794,13 @@ async function sincronizar(cultos: { [id: string]: any }) {
                 mudou = true
             }
         }
+
+        // So vale o que realmente entrou no projeto. Uma musica que nao existe
+        // nesta biblioteca, por exemplo, e ignorada aqui -- anotar mesmo assim
+        // faria o proximo passo entender que o operador a removeu, e apagaria
+        // do celular um envio que ninguem chegou a ver.
+        const noProjeto = new Set(((get(projects)[projetoId] as any)?.shows || []).map((item: any) => item.id))
+        chavesPorRef[cultoId] = Object.fromEntries(Object.entries(chaves).filter(([ref]) => noProjeto.has(ref)))
     }
 
     // um culto esvaziado some do banco, entao a volta e pelo registro, e nao
@@ -855,7 +884,15 @@ async function publicarLocais(cultos: { [id: string]: any }) {
             if (!partes) continue
 
             const projetoId = garantirProjeto(partes.projeto, garantirPastas(partes.pastas).id).id
-            const noProjeto = (get(projects)[projetoId] as any)?.shows || []
+
+            // projeto que nao existe nao e projeto vazio: sem esta saida, uma
+            // leitura antes da hora leria o culto como esvaziado e apagaria
+            // tudo que a equipe mandou
+            const projeto = get(projects)[projetoId] as any
+            if (!projeto) continue
+
+            const noProjeto = projeto.shows || []
+            const idsNoProjeto = new Set(noProjeto.map((entrada: any) => String(entrada?.id || "")))
 
             // o que ja veio do celular nao volta: seria o mesmo item duas vezes
             const doRemote = new Set(vindosDoRemote[cultoId] || [])
@@ -900,6 +937,17 @@ async function publicarLocais(cultos: { [id: string]: any }) {
             // sobrou publicado o que saiu do projeto aqui: tira do celular
             publicados.forEach((chave) => {
                 escritas[`cultos/${cultoId}/itens/${chave}`] = null
+            })
+
+            // O mesmo para o que veio do celular. Antes a remocao so andava num
+            // sentido: tirar do culto aqui nao mudava nada la, e a
+            // sincronizacao seguinte trazia o item de volta. So entra na conta
+            // o que este computador viu entrar no projeto -- envio recem-feito,
+            // ainda nao sincronizado, nao esta no mapa e nao corre risco.
+            Object.entries(chavesPorRef[cultoId] || {}).forEach(([referencia, chave]) => {
+                if (idsNoProjeto.has(referencia)) return
+                escritas[`cultos/${cultoId}/itens/${chave}`] = null
+                delete chavesPorRef[cultoId][referencia]
             })
         }
     }
