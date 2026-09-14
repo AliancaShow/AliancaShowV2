@@ -1,6 +1,6 @@
 import { initializeApp, type FirebaseApp } from "firebase/app"
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth } from "firebase/auth"
-import { getDatabase, onValue, ref, set, type Database } from "firebase/database"
+import { getDatabase, onValue, ref, set, update, type Database } from "firebase/database"
 import { get } from "svelte/store"
 import { uid } from "uid"
 import { Main } from "../../types/IPC/Main"
@@ -53,6 +53,7 @@ let pararComandos: (() => void) | null = null
 let pararEstado: (() => void) | null = null
 let pararCatalogo: (() => void) | null = null
 let pararBiblia: (() => void) | null = null
+let pararProjetos: (() => void) | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
 const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
@@ -93,6 +94,7 @@ function iniciar() {
             observarEstadoDaSaida()
             observarCatalogo()
             observarBiblia()
+            observarProjetos()
         } else {
             pararOuvinte?.()
             pararOuvinte = null
@@ -104,6 +106,8 @@ function iniciar() {
             pararCatalogo = null
             pararBiblia?.()
             pararBiblia = null
+            pararProjetos?.()
+            pararProjetos = null
         }
     })
 }
@@ -722,6 +726,14 @@ async function sincronizar(cultos: { [id: string]: any }) {
                 continue
             }
 
+            // Item que o operador montou aqui e este computador publicou. Ja
+            // esta no projeto -- so precisa entrar no registro, para que apagar
+            // pelo celular tire do projeto como qualquer outro.
+            if (item.tipo === "local") {
+                if (item.ref) daqui.push(item.ref)
+                continue
+            }
+
             if (item.tipo === "musica") {
                 daqui.push(item.showId)
                 if (adicionarAoProjeto(projetoId, { id: item.showId, type: "show" }, item.showId)) mudou = true
@@ -777,11 +789,129 @@ async function sincronizar(cultos: { [id: string]: any }) {
     vindosDoRemote = pedidos
     if (JSON.stringify(pedidos) !== antes) guardarRegistro()
 
+    ultimaFotoCultos = cultos
+    await publicarLocais(cultos)
+
     if (mudou) {
         estado.ultimaSync = Date.now()
         avisar()
         setTimeout(() => save(), 1500)
     }
+}
+
+/**
+ * Publica de volta o que foi montado aqui no computador.
+ *
+ * A ponte nasceu de mao unica: o celular mandava, o computador recebia. So que
+ * quem monta o culto tambem arrasta louvor e foto direto daqui, e esses itens
+ * nunca existiram no banco -- entao a lista do celular mostrava metade do
+ * culto, e a equipe nao tinha como saber o que ja estava resolvido.
+ *
+ * Aqui esses itens sobem como tipo "local": so o nome e a referencia, sem
+ * arquivo. O celular passa a ver o culto inteiro, e apagar por la tira do
+ * projeto igual a qualquer envio -- foi uma escolha consciente, e o caminho de
+ * remocao ja recusa apagar do disco o que esta fora da pasta Online.
+ */
+let ultimaFotoCultos: { [id: string]: any } = {}
+let publicacaoAgendada: ReturnType<typeof setTimeout> | null = null
+
+function chaveLocal(referencia: string) {
+    const limpo = referencia.replace(/[^A-Za-z0-9_-]/g, "_")
+    // o caminho de um arquivo passa dos 100 caracteres e a chave precisa ser
+    // curta; o resumo no fim evita que dois caminhos parecidos virem a mesma
+    let resumo = 0
+    for (let i = 0; i < referencia.length; i++) resumo = (resumo * 31 + referencia.charCodeAt(i)) >>> 0
+    return `local_${limpo.slice(-60)}_${resumo.toString(36)}`
+}
+
+function nomeDoItemLocal(entrada: any) {
+    const referencia = String(entrada?.id || "")
+    const doShow = get(shows)[referencia]?.name
+    if (doShow) return doShow
+    if (entrada?.name) return entrada.name
+    const arquivo = referencia.split(/[\\/]/).pop() || referencia
+    return arquivo.replace(/\.[^.]+$/, "")
+}
+
+async function publicarLocais(cultos: { [id: string]: any }) {
+    if (!db || !estado.ligado) return
+
+    const usuario = auth?.currentUser
+    if (!usuario) return
+
+    await carregarRegistro()
+
+    const escritas: { [caminho: string]: any } = {}
+    const ano = new Date().getFullYear()
+
+    for (let mes = 0; mes < 12; mes++) {
+        for (const dia of domingosDoMes(ano, mes)) {
+            const cultoId = `${ano}-${String(mes + 1).padStart(2, "0")}-${dia}`
+            const partes = caminhoDoculto(cultoId)
+            if (!partes) continue
+
+            const projetoId = garantirProjeto(partes.projeto, garantirPastas(partes.pastas).id).id
+            const noProjeto = (get(projects)[projetoId] as any)?.shows || []
+
+            // o que ja veio do celular nao volta: seria o mesmo item duas vezes
+            const doRemote = new Set(vindosDoRemote[cultoId] || [])
+
+            // o que este computador ja publicou, pela referencia
+            const publicados = new Map<string, string>()
+            Object.entries(cultos[cultoId]?.itens || {}).forEach(([chave, item]: any) => {
+                if (item?.tipo === "local" && item.ref) publicados.set(item.ref, chave)
+            })
+
+            noProjeto.forEach((entrada: any, ordem: number) => {
+                const referencia = String(entrada?.id || "")
+                if (!referencia || doRemote.has(referencia)) return
+                if (publicados.has(referencia)) {
+                    publicados.delete(referencia)
+                    return
+                }
+
+                escritas[`cultos/${cultoId}/data`] = cultoId
+                escritas[`cultos/${cultoId}/itens/${chaveLocal(referencia)}`] = {
+                    nome: nomeDoItemLocal(entrada).slice(0, 60),
+                    tipo: "local",
+                    midia: entrada.type || "show",
+                    ref: referencia,
+                    uid: usuario.uid,
+                    email: usuario.email || "",
+                    // a ordem do projeto vira a ordem no celular: a lista de la
+                    // e ordenada por este campo
+                    enviadoEm: Date.now() + ordem
+                }
+            })
+
+            // sobrou publicado o que saiu do projeto aqui: tira do celular
+            publicados.forEach((chave) => {
+                escritas[`cultos/${cultoId}/itens/${chave}`] = null
+            })
+        }
+    }
+
+    if (!Object.keys(escritas).length) return
+
+    try {
+        await update(ref(db!, "/"), escritas)
+    } catch (erro) {
+        console.error("Falha ao publicar o conteudo do projeto:", erro)
+    }
+}
+
+function observarProjetos() {
+    if (pararProjetos) return
+    // o operador mexe no projeto o tempo todo; publicar a cada tecla seria
+    // escrita a toa, e a sincronizacao em curso ja publica ao terminar
+    pararProjetos = projects.subscribe(() => {
+        if (!estado.ligado || sincronizando) return
+        if (publicacaoAgendada) return
+        publicacaoAgendada = setTimeout(() => {
+            publicacaoAgendada = null
+            publicarLocais(ultimaFotoCultos)
+        }, 2000)
+    })
 }
 
 function nomeDoArquivo(item: any) {
