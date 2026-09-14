@@ -109,7 +109,7 @@ function caminho(resto: string) {
     return `agendas/${agenda.id}/${resto}`
 }
 
-export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number; principal: boolean; dono: string; agenda: string }
+export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number; principal: boolean; dono: string; agenda: string; erroSync: string }
 
 let app: FirebaseApp | null = null
 let auth: Auth | null = null
@@ -124,7 +124,7 @@ let pararDono: (() => void) | null = null
 let batidaDono: ReturnType<typeof setInterval> | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
-const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca" }
+const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca", erroSync: "" }
 
 function avisar() {
     aoMudarEstado?.({ ...estado })
@@ -267,12 +267,38 @@ function enfileirar(cultos: { [id: string]: any }) {
                 proximaFoto = null
                 await sincronizar(atual)
             }
-        } catch (e) {
+            publicarDiagnostico("")
+        } catch (e: any) {
             console.error("Falha ao sincronizar:", e)
+            publicarDiagnostico(`${passo}: ${e?.message || e}`)
         } finally {
             sincronizando = false
         }
     })()
+}
+
+/**
+ * Onde a sincronizacao estava e o que deu errado.
+ *
+ * Duas vezes hoje ela parou no meio e o erro morreu no console do app, onde
+ * ninguem olha -- de fora, so dava para ver que nada chegava. Publicado, o
+ * problema aparece nas configuracoes e tambem pode ser lido de longe.
+ */
+let passo = ""
+let ultimoDiagnostico = ""
+
+function publicarDiagnostico(erro: string) {
+    estado.erroSync = erro
+    avisar()
+
+    const assinatura = `${erro}|${passo}`
+    if (assinatura === ultimoDiagnostico) return
+    ultimoDiagnostico = assinatura
+
+    if (!db || !estado.ligado) return
+    set(ref(db, caminho("diagnostico")), { erro, passo, em: Date.now() }).catch(() => {
+        ultimoDiagnostico = ""
+    })
 }
 
 function ouvirCultos() {
@@ -973,11 +999,16 @@ async function apagarOsQueSairamDoProjeto() {
 }
 
 async function sincronizar(cultos: { [id: string]: any }) {
+    passo = "registro"
     await carregarRegistro()
 
+    passo = "pastas de midia"
     let mudou = await garantirPastasDeMidia()
+
+    passo = "estrutura"
     mudou = garantirEstruturaCompleta() || mudou
 
+    passo = "remocoes"
     const removidosAqui = await apagarOsQueSairamDoProjeto()
 
     // o que o Remote pede AGORA, culto a culto -- a diferenca para o registro
@@ -986,6 +1017,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
     const incompletos = new Set<string>()
 
     for (const [cultoId, culto] of Object.entries(cultos)) {
+        passo = `culto ${cultoId}`
         const itens = Object.entries((culto as any)?.itens || {}).map(([chave, item]: any) => ({ ...item, chaveNoBanco: chave }))
         if (!itens.length) continue
 
@@ -1110,8 +1142,10 @@ async function sincronizar(cultos: { [id: string]: any }) {
     vindosDoRemote = pedidos
     if (JSON.stringify([pedidos, chavesPorRef]) !== antes) guardarRegistro()
 
+    passo = "espelho"
     ultimaFotoCultos = cultos
     await publicarLocais(cultos)
+    passo = "pronto"
 
     if (mudou) {
         estado.ultimaSync = Date.now()

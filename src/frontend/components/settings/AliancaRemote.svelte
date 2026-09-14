@@ -5,7 +5,7 @@
     import MaterialButton from "../inputs/MaterialButton.svelte"
     import MaterialTextInput from "../inputs/MaterialTextInput.svelte"
 
-    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca" }
+    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca", erroSync: "" }
     let email = ""
     let senha = ""
 
@@ -61,6 +61,10 @@
                 {/if}
             </span>
         </div>
+
+        {#if estado.erroSync}
+            <p class="erro"><Icon id="alert" size={0.9} white />A sincronização parou em {estado.erroSync}</p>
+        {/if}
 
         {#if !estado.principal}
             <MaterialButton variant="outlined" icon="cloud" on:click={assumirControle} white>Tornar este o principal</MaterialButton>
