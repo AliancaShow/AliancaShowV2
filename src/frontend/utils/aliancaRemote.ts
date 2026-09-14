@@ -8,7 +8,8 @@ import { OutputHelper } from "../components/helpers/OutputHelper"
 import { clearAll } from "../components/output/clear"
 import { getActiveOutputs } from "../components/helpers/output"
 import { getSlideText } from "../components/edit/scripts/textStyle"
-import { outputs, outputDisplay, showsCache } from "../stores"
+import { activeProject, activeShow, outputs, outputDisplay, projects, shows, showsCache } from "../stores"
+import { openProjectItem } from "../components/show/project"
 import { requestMain, sendMain } from "../IPC/main"
 import { folders, media, mediaFolders, projects, shows } from "../stores"
 import { save } from "./save"
@@ -199,13 +200,19 @@ function ouvirCultos() {
  *  para nao ressuscitar um toque de horas atras. */
 const VALIDADE_COMANDO = 30_000
 
-const COMANDOS: { [k: string]: () => void } = {
+const COMANDOS: { [k: string]: (valor: any) => void } = {
     proximo: () => OutputHelper.advanceOutputs("next"),
     anterior: () => OutputHelper.advanceOutputs("previous"),
     // mesma acao do botao "Limpar tudo": alguem atravessa na frente do
     // projetor, entra a midia errada -- e a funcao que se procura com pressa e
     // a unica do transporte que faltava no celular
-    limpar: () => clearAll(true)
+    limpar: () => clearAll(true),
+    // saltar direto para um item do culto, sem passar slide por slide
+    abrir: (valor) => {
+        const projetoId = get(activeProject)
+        if (!projetoId || typeof valor?.indice !== "number") return
+        openProjectItem(projetoId, valor.indice)
+    }
 }
 
 function ouvirComandos() {
@@ -233,7 +240,7 @@ function ouvirComandos() {
                 return
             }
 
-            executar()
+            executar(valor)
 
             // limpa para o mesmo toque nao repetir numa reconexao
             set(ref(db!, "comando"), null).catch((erro) => console.error("Falha ao limpar o comando:", erro))
@@ -273,12 +280,26 @@ function publicarEstado() {
     const slide = indice >= 0 && saida?.id ? show?.slides?.[layout?.slides?.[indice]?.id || ""] : null
     const texto = slide ? getSlideText(slide).slice(0, 200) : ""
 
+    // A ordem do culto, para o celular poder saltar direto a um item em vez de
+    // passar slide por slide. Nome resolvido aqui: o item guarda so o id, e o
+    // celular nao tem a biblioteca de shows para traduzir.
+    const projetoId = get(activeProject)
+    const projeto = projetoId ? get(projects)[projetoId] : null
+    const itens = (projeto?.shows || []).slice(0, 100).map((item: any) => ({
+        nome: get(shows)[item.id]?.name || item.name || "—",
+        tipo: item.type || "show"
+    }))
+    const itemAtual = typeof get(activeShow)?.index === "number" ? get(activeShow)!.index! : -1
+
     const novo = {
         noAr: !!get(outputDisplay),
         show: show?.name || "",
         indice,
         total,
         texto,
+        culto: projeto?.name || "",
+        itens,
+        itemAtual,
         em: Date.now()
     }
 
@@ -299,9 +320,14 @@ function observarEstadoDaSaida() {
     // outputs cobre troca de slide e de show; outputDisplay cobre entrar e sair do ar
     const a = outputs.subscribe(() => publicarEstado())
     const b = outputDisplay.subscribe(() => publicarEstado())
+    // activeShow cobre trocar de item dentro do culto; activeProject, trocar de culto
+    const c = activeShow.subscribe(() => publicarEstado())
+    const d = activeProject.subscribe(() => publicarEstado())
     pararEstado = () => {
         a()
         b()
+        c()
+        d()
     }
 }
 
