@@ -52,6 +52,7 @@ let pararOuvinte: (() => void) | null = null
 let pararComandos: (() => void) | null = null
 let pararEstado: (() => void) | null = null
 let pararCatalogo: (() => void) | null = null
+let pararBiblia: (() => void) | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
 const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
@@ -91,7 +92,7 @@ function iniciar() {
             ouvirComandos()
             observarEstadoDaSaida()
             observarCatalogo()
-            publicarIndiceBiblia()
+            observarBiblia()
         } else {
             pararOuvinte?.()
             pararOuvinte = null
@@ -101,6 +102,8 @@ function iniciar() {
             pararEstado = null
             pararCatalogo?.()
             pararCatalogo = null
+            pararBiblia?.()
+            pararBiblia = null
         }
     })
 }
@@ -475,6 +478,14 @@ function observarCatalogo() {
     if (pararCatalogo) return
     // a biblioteca muda pouco; a comparacao de assinatura evita escrita a toa
     pararCatalogo = shows.subscribe(() => publicarCatalogo())
+}
+
+function observarBiblia() {
+    if (pararBiblia) return
+    // Publicar uma vez no login nao bastava: a lista de Biblias vem das
+    // configuracoes, que terminam de carregar depois da autenticacao -- entao
+    // na hora certa ainda nao havia Biblia nenhuma e o indice saia vazio.
+    pararBiblia = scriptures.subscribe(() => publicarIndiceBiblia())
 }
 
 function observarEstadoDaSaida() {
