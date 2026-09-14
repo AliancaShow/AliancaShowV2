@@ -526,11 +526,16 @@ function observarEstadoDaSaida() {
     // activeShow cobre trocar de item dentro do culto; activeProject, trocar de culto
     const c = activeShow.subscribe(() => publicarEstado())
     const d = activeProject.subscribe(() => publicarEstado())
+    // e projects cobre mexer no culto aberto. Faltava: acrescentar um louvor
+    // aqui nao mudava saida, show nem projeto ativo, entao a ordem do culto no
+    // celular ficava a do ultimo evento -- sem o item recem-colocado
+    const e = projects.subscribe(() => publicarEstado())
     pararEstado = () => {
         a()
         b()
         c()
         d()
+        e()
     }
 }
 
