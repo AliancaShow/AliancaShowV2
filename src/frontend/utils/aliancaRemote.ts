@@ -48,6 +48,7 @@ let db: Database | null = null
 let pararOuvinte: (() => void) | null = null
 let pararComandos: (() => void) | null = null
 let pararEstado: (() => void) | null = null
+let pararCatalogo: (() => void) | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
 const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
@@ -86,6 +87,7 @@ function iniciar() {
             ouvirCultos()
             ouvirComandos()
             observarEstadoDaSaida()
+            observarCatalogo()
         } else {
             pararOuvinte?.()
             pararOuvinte = null
@@ -93,6 +95,8 @@ function iniciar() {
             pararComandos = null
             pararEstado?.()
             pararEstado = null
+            pararCatalogo?.()
+            pararCatalogo = null
         }
     })
 }
@@ -313,6 +317,41 @@ function publicarEstado() {
         estadoAgendado = null
         set(ref(db!, "estado"), novo).catch((erro) => console.error("Falha ao publicar o estado:", erro))
     }, 500)
+}
+
+/**
+ * Publica a biblioteca de shows como catalogo, para o celular escolher musica.
+ *
+ * O catalogo e indexado pelo id do show, e e esse id que volta quando alguem
+ * adiciona uma musica ao culto. Enquanto ninguem publicava, a lista precisava
+ * ser mantida a mao em algum lugar -- e um id que nao batesse com esta
+ * biblioteca fazia a musica ser descartada em silencio.
+ *
+ * Publicando daqui, os ids batem por construcao, e musica nova aparece no
+ * celular assim que existe no computador.
+ */
+let ultimoCatalogo = ""
+
+function publicarCatalogo() {
+    if (!db || !estado.ligado) return
+
+    const catalogo: { [id: string]: { nome: string } } = {}
+    Object.entries(get(shows)).forEach(([id, show]: any) => {
+        if (!show?.name || show.private) return
+        catalogo[id] = { nome: show.name }
+    })
+
+    const assinatura = JSON.stringify(catalogo)
+    if (assinatura === ultimoCatalogo) return
+    ultimoCatalogo = assinatura
+
+    set(ref(db!, "catalogo"), catalogo).catch((erro) => console.error("Falha ao publicar o catalogo:", erro))
+}
+
+function observarCatalogo() {
+    if (pararCatalogo) return
+    // a biblioteca muda pouco; a comparacao de assinatura evita escrita a toa
+    pararCatalogo = shows.subscribe(() => publicarCatalogo())
 }
 
 function observarEstadoDaSaida() {
@@ -609,7 +648,15 @@ function adicionarAoProjeto(projetoId: string, ref: any, chave: string) {
     const projeto: any = get(projects)[projetoId]
     if (!projeto) return false
     if ((projeto.shows || []).some((s: any) => s.id === chave)) return false
-    if (ref.type === "show" && !get(shows)[ref.id]) return false // musica que nao existe neste computador
+    if (ref.type === "show" && !get(shows)[ref.id]) {
+        // Musica escolhida no celular que nao existe nesta biblioteca. Antes
+        // sumia calada: no celular parecia enviada, aqui nao acontecia nada, e
+        // ninguem tinha como saber. Com o catalogo publicado por este mesmo
+        // computador isso nao deveria mais ocorrer -- se ocorrer, o aviso diz
+        // qual id faltou.
+        console.warn("AliancaShow Remote: musica ignorada, nao existe nesta biblioteca:", ref.id)
+        return false
+    }
 
     projects.update((a) => {
         a[projetoId].shows = [...(a[projetoId].shows || []), ref]
