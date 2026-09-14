@@ -1,3 +1,4 @@
+import { nomeDeArquivoDeShow } from "../utils/shows"
 import fs from "fs"
 import path from "path"
 import { Main } from "../../types/IPC/Main"
@@ -259,7 +260,7 @@ export async function restoreFiles(data?: { path: string }) {
         Object.entries(shows).forEach(saveShow)
         function saveShow([id, value]: [string, Show]) {
             if (!value) return
-            const showPath: string = path.resolve(showsPath, (value.name || id) + ".show")
+            const showPath: string = path.resolve(showsPath, nomeDeArquivoDeShow(value.name, id) + ".show")
             writeFile(showPath, JSON.stringify([id, value]), id)
         }
     }

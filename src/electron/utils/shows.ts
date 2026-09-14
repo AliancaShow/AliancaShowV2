@@ -6,6 +6,22 @@ import { deleteFile, getDataFolderPath, parseShow, readFile, readFileAsync, read
 import { OutputHelper } from "../output/OutputHelper"
 import fs from "fs"
 
+/**
+ * Nome do arquivo de um show.
+ *
+ * O nome do show pode ter ":" -- "Juizes 8:1-5 NVI" e como a referencia se
+ * escreve, e e assim que ele aparece no culto. So que ":" e ilegal em nome de
+ * arquivo no Windows: gravado cru, o NTFS entende como fluxo alternativo e o
+ * show desaparece da pasta. Quem troca e a gravacao, nao o nome.
+ */
+export function nomeDeArquivoDeShow(nome: string, id = "") {
+    const limpo = String(nome || "")
+        .replaceAll(":", ",")
+        .replace(/[/\?%*|"<>]/g, "")
+        .trim()
+    return limpo || id || "sem-nome"
+}
+
 export function getAllShows() {
     const showsPath = getDataFolderPath("shows")
     const filesInFolder: string[] = readFolder(showsPath).filter((a) => a.includes(".show") && a.length > 5)
@@ -15,8 +31,8 @@ export function getAllShows() {
 export async function renameShows(shows: { id: string; name: string; oldName: string }[], filePath: string) {
     await Promise.all(shows.map((show) => checkFile(show)))
     async function checkFile(show: { id: string; name: string; oldName: string }) {
-        const oldName = show.oldName + ".show"
-        const newName = (show.name || show.id) + ".show"
+        const oldName = nomeDeArquivoDeShow(show.oldName, show.id) + ".show"
+        const newName = nomeDeArquivoDeShow(show.name, show.id) + ".show"
 
         await renameFileAsync(filePath, oldName, newName)
     }

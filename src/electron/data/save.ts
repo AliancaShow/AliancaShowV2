@@ -11,7 +11,7 @@ import { _store, safeStoreSet } from "../data/store"
 import { sendMain, sendToMain } from "../IPC/main"
 import { deleteFile, doesPathExist, getDataFolderPath, parseShow, readFile, writeFile } from "../utils/files"
 import { checkIfMatching, clone, wait } from "../utils/helpers"
-import { marcarGravacaoPropria, renameShows } from "../utils/shows"
+import { marcarGravacaoPropria, nomeDeArquivoDeShow, renameShows } from "../utils/shows"
 
 // Full-file stores that use real edit timestamps instead of file mtime for cloud sync comparison.
 // Prevents sync writes from falsely flagging stores as newer.
@@ -85,7 +85,7 @@ export async function save(data: SaveData) {
     if (data.showsCache) Object.entries(data.showsCache).forEach(saveShow)
     function saveShow([id, value]: [string, any]) {
         if (!value || !isValidJSON(value)) return
-        const filePath: string = path.join(showsPath, String(value.name || id) + ".show")
+        const filePath: string = path.join(showsPath, nomeDeArquivoDeShow(value.name, id) + ".show")
         writeFile(filePath, JSON.stringify([id, value]), id)
     }
 
@@ -94,7 +94,7 @@ export async function save(data: SaveData) {
     function deleteShow({ name, id }: { name: string; id: string }) {
         if (!id || data.showsCache?.[id]) return
 
-        const filePath: string = path.join(showsPath, (name || id) + ".show")
+        const filePath: string = path.join(showsPath, nomeDeArquivoDeShow(name, id) + ".show")
         if (!doesPathExist(filePath)) return
 
         // load file to double check the ID (as a new show with the same name might have been created)

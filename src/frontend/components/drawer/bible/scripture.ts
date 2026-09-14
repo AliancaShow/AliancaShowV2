@@ -1803,9 +1803,14 @@ export async function getScriptureShow(biblesContent: BibleContent[] | null) {
 
     const fallbackRange = joinRange(selectedVerses[0])
     const divider = getReferenceDivider()
-    const bibleShowName = `${biblesContent[0].book} ${fullReferenceRange || `${selectedChapters[0]}${divider}${fallbackRange}`}`.trim()
+    // "Juizes 8:1-5 NVI": a referencia como se escreve, e a versao logo depois.
+    // Antes o nome saia "Juizes 8,1-5 - NVI" por dois acidentes: o ":" virava
+    // virgula na limpeza para nome de arquivo, e essa troca fazia o nome parecer
+    // ocupado -- o codigo entao acrescentava " - VERSAO" para desempatar.
+    const versao = getShortBibleName(biblesContent[0].version || "")
+    const referencia = `${biblesContent[0].book} ${fullReferenceRange || `${selectedChapters[0]}${divider}${fallbackRange}`}`.trim()
+    const bibleShowName = `${referencia}${versao ? ` ${versao}` : ""}`
     show.name = checkName(bibleShowName)
-    if (show.name !== bibleShowName) show.name = checkName(`${bibleShowName} - ${getShortBibleName(biblesContent[0].version || "")}`)
     show.slides = slides2
     show.layouts = { [layoutID]: { name: biblesContent[0].version || "", notes: "", slides: layouts } }
     show.media = media

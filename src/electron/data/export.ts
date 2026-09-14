@@ -1,3 +1,4 @@
+import { nomeDeArquivoDeShow } from "../utils/shows"
 // ----- FreeShow -----
 // Export as TXT or PDF
 // When exporting as PDF we create a new window and capture its content
@@ -191,7 +192,7 @@ export function exportShow(data: { path: string; shows: Show[] }) {
         const id = show.id
         delete show.id
 
-        writeFile(join(data.path, show.name || id!), ".show", JSON.stringify([id, show]), "utf-8", (err) => doneWritingFile(err, data.path, i >= data.shows.length - 1))
+        writeFile(join(data.path, nomeDeArquivoDeShow(show.name, id!)), ".show", JSON.stringify([id, show]), "utf-8", (err) => doneWritingFile(err, data.path, i >= data.shows.length - 1))
     })
 }
 

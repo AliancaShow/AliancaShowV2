@@ -12,7 +12,7 @@ import { _show } from "./shows"
 // check if name exists and add number
 export function checkName(name = "", showId = "") {
     if (!name || typeof name !== "string") name = translateText("main.unnamed")
-    name = formatToFileName(name)
+    name = formatToShowName(name)
 
     // if ID exists, check the name if different
     if (showId && get(shows)[showId]) {
@@ -25,6 +25,22 @@ export function checkName(name = "", showId = "") {
 
     // add number if existing name, and trim away spaces from the start/end
     return (number > 1 ? name + " " + number : name).trim()
+}
+
+/**
+ * Nome de show, que nao e nome de arquivo.
+ *
+ * "Juizes 8:1-5 NVI" e como a referencia se escreve, e e assim que ela precisa
+ * aparecer no culto. O ":" so incomoda na hora de gravar, e quem cuida disso e
+ * o processo principal, em nomeDeArquivoDeShow.
+ */
+export function formatToShowName(name = "") {
+    if (typeof name !== "string") return ""
+
+    name = name.trim().replace(/[/\?%*|│"<>╠┤╡╝╖┐¬]/g, "")
+    if (name.length > 255) name = name.slice(0, 255)
+
+    return name
 }
 
 export function formatToFileName(name = "") {

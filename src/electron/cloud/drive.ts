@@ -1,3 +1,4 @@
+import { nomeDeArquivoDeShow } from "../utils/shows"
 import { auth, drive, type drive_v3 } from "@googleapis/drive"
 import type { GaxiosResponse } from "gaxios"
 import path from "path"
@@ -401,7 +402,7 @@ export async function syncDataDrive(data: DriveData) {
 
         await Promise.all(Object.entries(shows).map(checkShow))
         async function checkShow([id, show]: [string, TrimmedShow | Show]) {
-            const showName = (localShows[id]?.name || show?.name || id) + ".show"
+            const showName = nomeDeArquivoDeShow(localShows[id]?.name || show?.name, id) + ".show"
             const localShowPath = path.join(showsPath, showName)
 
             let newest = getNewest({ driveFile, localPath: localShowPath })
@@ -474,7 +475,7 @@ export async function syncDataDrive(data: DriveData) {
 
             // "download" show
             if (cloudContent && (newest === "cloud" || data.method === "download") && data.method !== "upload") {
-                const newName = (show?.name || id) + ".show"
+                const newName = nomeDeArquivoDeShow(show?.name, id) + ".show"
                 if (localShows[id] && newName !== showName) {
                     if (DEBUG) console.info("Rename file:", showName, "->", newName)
                     deleteFile(localShowPath) // renamed

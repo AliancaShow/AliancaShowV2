@@ -1,3 +1,4 @@
+import { nomeDeArquivoDeShow } from "../utils/shows"
 import { app } from "electron"
 import path from "path"
 import { isProd } from ".."
@@ -258,7 +259,7 @@ export async function syncData(data: { id: SyncProviderId; churchId: string; tea
             showsFound = true
             await asyncPool(50, Object.entries<Show>(cloudFileData), async ([id, show]) => {
                 try {
-                    const fileName = (show.name || id) + ".show"
+                    const fileName = nomeDeArquivoDeShow(show.name, id) + ".show"
                     const localShowPath = path.join(showsFolder, fileName)
                     cloudShowNames.push(fileName)
 
