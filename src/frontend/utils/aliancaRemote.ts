@@ -505,6 +505,10 @@ function publicarEstado() {
 /**
  * Publica a biblioteca de shows como catalogo, para o celular escolher musica.
  *
+ * Fica FORA da agenda, ao contrario do resto: o repertorio e o mesmo nos dois
+ * cultos, e uma copia por agenda faria o Impulso aparecer sem louvor nenhum ate
+ * o computador dele ligar pela primeira vez.
+ *
  * O catalogo e indexado pelo id do show, e e esse id que volta quando alguem
  * adiciona uma musica ao culto. Enquanto ninguem publicava, a lista precisava
  * ser mantida a mao em algum lugar -- e um id que nao batesse com esta
@@ -528,7 +532,7 @@ function publicarCatalogo() {
     if (assinatura === ultimoCatalogo) return
     ultimoCatalogo = assinatura
 
-    set(ref(db!, caminho("catalogo")), catalogo).catch((erro) => {
+    set(ref(db!, "catalogo"), catalogo).catch((erro) => {
         // limpa a assinatura: sem isso uma escrita recusada (regra do banco,
         // internet fora) faria o app achar que ja publicou e nunca mais tentar.
         // Foi assim que o catalogo ficou meses sem sair daqui.
