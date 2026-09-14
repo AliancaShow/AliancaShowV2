@@ -424,16 +424,24 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
     const versiculos: number[] = Array.isArray(item.versiculos) ? item.versiculos : []
     if (!versiculos.length) return ""
 
-    const showId = `bib-${item.livro}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
-
-    // ja existe: so referenciar
-    if (get(shows)[showId]) return showId
-
     const bibliaId = idDaBibliaLocal()
     if (!bibliaId) {
         console.warn("AliancaShow Remote: nenhuma Biblia local instalada, versiculo ignorado")
         return ""
     }
+
+    // O celular manda o INDICE do livro na lista publicada; o json-bible resolve
+    // pelo NUMERO do livro (Genesis = 1). Usar um no lugar do outro tirava um
+    // livro inteiro de diferenca -- pedir Juizes trazia Josue. A conversao sai
+    // da propria lista publicada, e nao de "indice + 1", porque a numeracao de
+    // uma Biblia com apocrifos ou fora de ordem nao acompanharia a posicao.
+    const biblia = await loadJsonBible(bibliaId)
+    const livroNumero = Number((biblia?.data as any)?.books?.[item.livro]?.number ?? Number(item.livro) + 1)
+
+    const showId = `bib-${livroNumero}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
+
+    // ja existe: so referenciar
+    if (get(shows)[showId]) return showId
 
     const refAnterior = get(activeScripture)
     const abaAnterior = (get(drawerTabsData) as any).scripture?.activeSubTab
@@ -447,7 +455,7 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
             a.scripture.activeSubTab = bibliaId
             return a
         })
-        activeScripture.set({ id: bibliaId, reference: { book: item.livro, chapters: [item.capitulo], verses: [versiculos] } })
+        activeScripture.set({ id: bibliaId, reference: { book: livroNumero, chapters: [item.capitulo], verses: [versiculos] } })
 
         const conteudo = await getActiveScripturesContent([versiculos])
         const show = await getScriptureShow(conteudo)
