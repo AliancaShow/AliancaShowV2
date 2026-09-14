@@ -482,7 +482,11 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
         history({
             id: "UPDATE",
             oldData: { id: showId },
-            newData: { data: show, remember: { project: projetoId } },
+            // sem "remember": ele empurra o show para o projeto sem olhar se ja
+            // esta la, e remontar um versiculo existente criava uma segunda
+            // linha no culto. Quem poe no projeto e adicionarAoProjeto, que
+            // confere antes -- e ainda marca o tipo, que este caminho nao marca
+            newData: { data: show },
             location: { page: "show", id: "show" }
         })
 
@@ -866,6 +870,11 @@ async function sincronizar(cultos: { [id: string]: any }) {
             }
         }
 
+        // Linha repetida no culto: o mesmo show entrou duas vezes enquanto a
+        // remontagem tambem o empurrava para o projeto. Some sozinha em vez de
+        // exigir limpeza a mao, culto por culto.
+        if (tirarRepetidos(projetoId)) mudou = true
+
         // So vale o que realmente entrou no projeto. Uma musica que nao existe
         // nesta biblioteca, por exemplo, e ignorada aqui -- anotar mesmo assim
         // faria o proximo passo entender que o operador a removeu, e apagaria
@@ -1058,6 +1067,32 @@ function nomeDoArquivo(item: any) {
         .replace(/[^A-Za-z0-9 ._-]/g, "")
         .trim()
     return limpo ? limpo + extensao : String(item.arquivo || "arquivo")
+}
+
+/** devolve true se tirou alguma linha repetida, mantendo sempre a primeira */
+function tirarRepetidos(projetoId: string) {
+    const projeto: any = get(projects)[projetoId]
+    const itens: any[] = projeto?.shows || []
+    if (!itens.length) return false
+
+    const vistos = new Set<string>()
+    const limpos = itens.filter((item) => {
+        const id = String(item?.id || "")
+        // caminho de arquivo pode repetir de proposito (a mesma foto duas vezes
+        // no culto nao e engano), entao so shows entram nesta conta
+        if (!id || id.includes("\\") || id.includes("/")) return true
+        if (vistos.has(id)) return false
+        vistos.add(id)
+        return true
+    })
+
+    if (limpos.length === itens.length) return false
+
+    projects.update((a) => {
+        a[projetoId].shows = limpos
+        return a
+    })
+    return true
 }
 
 /** devolve true se acrescentou; nunca duplica nem mexe no que o operador reordenou */
