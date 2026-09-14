@@ -1,11 +1,11 @@
 <script lang="ts">
     import { onMount } from "svelte"
-    import { entrar, observarEstado, sair, type EstadoRemote } from "../../utils/aliancaRemote"
+    import { assumirControle, entrar, observarEstado, sair, type EstadoRemote } from "../../utils/aliancaRemote"
     import Icon from "../helpers/Icon.svelte"
     import MaterialButton from "../inputs/MaterialButton.svelte"
     import MaterialTextInput from "../inputs/MaterialTextInput.svelte"
 
-    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
+    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "" }
     let email = ""
     let senha = ""
 
@@ -45,6 +45,26 @@
             As fotos, vídeos e músicas enviadas pelo celular chegam sozinhas. Os arquivos ficam na pasta <b>Online</b>, visíveis na aba Mídia, e cada
             culto vira um projeto com o mesmo caminho do envio.
         </p>
+
+        <!-- Com mais de um computador, só um pode mandar no culto: se os dois
+             publicassem, cada um apagaria o que o outro montou. Receber e baixar
+             continua valendo para todos. -->
+        <div class="papel">
+            <Icon id={estado.principal ? "check" : "cloud"} size={0.9} white />
+            <span>
+                {#if estado.principal}
+                    Este computador é o <b>principal</b> — é daqui que o celular recebe a ordem do culto.
+                {:else if estado.dono}
+                    O principal é <b>{estado.dono}</b>. Este aqui recebe e baixa tudo, mas não publica.
+                {:else}
+                    Nenhum computador assumiu ainda.
+                {/if}
+            </span>
+        </div>
+
+        {#if !estado.principal}
+            <MaterialButton variant="outlined" icon="cloud" on:click={assumirControle} white>Tornar este o principal</MaterialButton>
+        {/if}
         <MaterialButton variant="outlined" icon="logout" on:click={sair} white>Desconectar</MaterialButton>
     {:else}
         <p class="explicacao">Conecte a conta deste computador para receber o que a equipe enviar pelo celular.</p>
@@ -77,6 +97,17 @@
         display: flex;
         align-items: center;
         gap: 12px;
+    }
+
+    .papel {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 11px 12px;
+        border-radius: 6px;
+        background-color: var(--primary);
+        font-size: 0.9em;
+        line-height: 1.5;
     }
 
     .ponto {

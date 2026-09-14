@@ -44,7 +44,7 @@ const firebaseConfig = {
 // as duas raizes, que viram pastas de projeto e tambem pastas de midia
 const RAIZES = ["Alianca"]
 
-export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number }
+export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number; principal: boolean; dono: string }
 
 let app: FirebaseApp | null = null
 let auth: Auth | null = null
@@ -55,9 +55,11 @@ let pararEstado: (() => void) | null = null
 let pararCatalogo: (() => void) | null = null
 let pararBiblia: (() => void) | null = null
 let pararProjetos: (() => void) | null = null
+let pararDono: (() => void) | null = null
+let batidaDono: ReturnType<typeof setInterval> | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
-const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0 }
+const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "" }
 
 function avisar() {
     aoMudarEstado?.({ ...estado })
@@ -96,6 +98,7 @@ function iniciar() {
             observarCatalogo()
             observarBiblia()
             observarProjetos()
+            prepararIdentidade().then(observarDono)
         } else {
             pararOuvinte?.()
             pararOuvinte = null
@@ -109,6 +112,13 @@ function iniciar() {
             pararBiblia = null
             pararProjetos?.()
             pararProjetos = null
+            pararDono?.()
+            pararDono = null
+            if (batidaDono) clearInterval(batidaDono)
+            batidaDono = null
+            donoAtual = null
+            estado.principal = false
+            estado.dono = ""
         }
     })
 }
@@ -282,8 +292,79 @@ function ouvirComandos() {
 let ultimoEstado = ""
 let estadoAgendado: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Qual computador manda no culto.
+ *
+ * Mais de uma instalacao com a mesma conta e o caso normal aqui: a maquina da
+ * igreja e a que fica em casa para preparar. Sem um dono, as duas espelham o
+ * proprio projeto e apagam do banco o que nao esta nele -- uma desfazendo a
+ * outra, ate o culto esvaziar no celular.
+ *
+ * Entao: quem recebe e baixa continua sendo toda maquina ligada; quem PUBLICA
+ * (ordem do culto, catalogo, indice da Biblia e o espelho do projeto) e so a
+ * principal. O posto e tomado por quem chegar primeiro e mantido por uma
+ * batida a cada 45s; parado por mais de dois minutos e meio, ele fica livre --
+ * assim fechar o app da igreja nao deixa ninguem travado.
+ */
+const VALIDADE_DONO = 150_000
+
+let meuId = ""
+let meuNome = ""
+let donoAtual: { id?: string; nome?: string; em?: number } | null = null
+
+async function prepararIdentidade() {
+    if (meuId) return
+    meuId = (await requestMain(Main.GET_STORE_VALUE, { file: "config", key: "aliancaIdDoComputador" })) || ""
+    if (!meuId) {
+        meuId = uid(8)
+        sendMain(Main.SET_STORE_VALUE, { file: "config", key: "aliancaIdDoComputador", value: meuId })
+    }
+    meuNome = (await requestMain(Main.GET_DEVICE_NAME)) || "Computador"
+}
+
+function souPrincipal() {
+    return !!meuId && donoAtual?.id === meuId
+}
+
+function postoVago() {
+    return !donoAtual?.id || !donoAtual?.em || Date.now() - donoAtual.em > VALIDADE_DONO
+}
+
+async function reivindicar(forcado = false) {
+    if (!db || !estado.ligado || !meuId) return
+    if (!forcado && !souPrincipal() && !postoVago()) return
+
+    try {
+        await set(ref(db, "controle/dono"), { id: meuId, nome: meuNome, em: Date.now() })
+    } catch (erro) {
+        console.error("Falha ao anunciar o computador principal:", erro)
+    }
+}
+
+/** usado pelo botao: passa o posto para este computador na hora */
+export function assumirControle() {
+    return reivindicar(true)
+}
+
+function observarDono() {
+    if (pararDono) return
+
+    pararDono = onValue(ref(db!, "controle/dono"), (snap) => {
+        donoAtual = snap.val()
+        estado.principal = souPrincipal()
+        estado.dono = donoAtual?.nome || ""
+        avisar()
+
+        // o posto ficou livre (a outra maquina fechou): assume sem pedir nada
+        if (postoVago()) reivindicar()
+    })
+
+    reivindicar()
+    batidaDono = setInterval(() => reivindicar(), 45_000)
+}
+
 function publicarEstado() {
-    if (!db || !estado.ligado) return
+    if (!db || !estado.ligado || !souPrincipal()) return
 
     const saidaId = getActiveOutputs(get(outputs), true, true, true)[0]
     const saida = get(outputs)[saidaId]?.out?.slide
@@ -348,7 +429,7 @@ function publicarEstado() {
 let ultimoCatalogo = ""
 
 function publicarCatalogo() {
-    if (!db || !estado.ligado) return
+    if (!db || !estado.ligado || !souPrincipal()) return
 
     const catalogo: { [id: string]: { nome: string } } = {}
     Object.entries(get(shows)).forEach(([id, show]: any) => {
@@ -388,7 +469,7 @@ function idDaBibliaLocal() {
 let ultimoIndiceBiblia = ""
 
 async function publicarIndiceBiblia() {
-    if (!db || !estado.ligado) return
+    if (!db || !estado.ligado || !souPrincipal()) return
 
     const bibliaId = idDaBibliaLocal()
     if (!bibliaId) return
@@ -734,7 +815,7 @@ function tirarDoProjeto(cultoId: string, sumiram: string[]) {
  */
 async function apagarOsQueSairamDoProjeto() {
     const fora = new Set<string>()
-    if (!db || !estado.ligado) return fora
+    if (!db || !estado.ligado || !souPrincipal()) return fora
 
     const escritas: { [caminho: string]: null } = {}
     const aEsquecer: { culto: string; referencia: string }[] = []
@@ -956,7 +1037,7 @@ function nomeDoItemLocal(entrada: any) {
 }
 
 async function publicarLocais(cultos: { [id: string]: any }) {
-    if (!db || !estado.ligado) return
+    if (!db || !estado.ligado || !souPrincipal()) return
 
     const usuario = auth?.currentUser
     if (!usuario) return
@@ -987,9 +1068,9 @@ async function publicarLocais(cultos: { [id: string]: any }) {
             const doRemote = new Set(vindosDoRemote[cultoId] || [])
 
             // o que este computador ja publicou, pela referencia
-            const publicados = new Map<string, string>()
+            const publicados = new Map<string, { chave: string; de: string }>()
             Object.entries(cultos[cultoId]?.itens || {}).forEach(([chave, item]: any) => {
-                if (item?.tipo === "local" && item.ref) publicados.set(item.ref, chave)
+                if (item?.tipo === "local" && item.ref) publicados.set(item.ref, { chave, de: item.porComputador || "" })
             })
 
             noProjeto.forEach((entrada: any, ordem: number) => {
@@ -1004,7 +1085,11 @@ async function publicarLocais(cultos: { [id: string]: any }) {
                 // volta seguinte saia do projeto. Foi assim que tres louvores
                 // sumiram do culto de 20/09.
                 if (publicados.has(referencia)) {
+                    const publicado = publicados.get(referencia)!
                     publicados.delete(referencia)
+                    // publicado antes de existir a marca de computador: assume
+                    // agora, senao ninguem poderia limpa-lo depois
+                    if (!publicado.de) escritas[`cultos/${cultoId}/itens/${publicado.chave}/porComputador`] = meuId
                     return
                 }
                 if (doRemote.has(referencia)) return
@@ -1015,6 +1100,9 @@ async function publicarLocais(cultos: { [id: string]: any }) {
                     tipo: "local",
                     midia: entrada.type || "show",
                     ref: referencia,
+                    // de qual computador saiu: so quem publicou pode apagar, senao
+                    // a maquina de casa limparia o que a da igreja montou
+                    porComputador: meuId,
                     uid: usuario.uid,
                     email: usuario.email || "",
                     // a ordem do projeto vira a ordem no celular: a lista de la
@@ -1023,8 +1111,11 @@ async function publicarLocais(cultos: { [id: string]: any }) {
                 }
             })
 
-            // sobrou publicado o que saiu do projeto aqui: tira do celular
-            publicados.forEach((chave) => {
+            // sobrou publicado o que saiu do projeto aqui: tira do celular. O
+            // que outro computador publicou fica -- de la ele nao saiu, e quem
+            // apaga e quem montou
+            publicados.forEach(({ chave, de }) => {
+                if (de && de !== meuId) return
                 escritas[`cultos/${cultoId}/itens/${chave}`] = null
             })
 
