@@ -450,10 +450,14 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
     const refAnterior = get(activeScripture)
     const abaAnterior = (get(drawerTabsData) as any).scripture?.activeSubTab
     const porSlideAnterior = get(scriptureSettings).versesPerSlide
+    const agrupamentoAnterior = get(scriptureSettings).smartSplit
 
     try {
-        // regra do AliancaShow: um versiculo por slide
-        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: 1 }))
+        // Regra do AliancaShow: um versiculo por slide. O agrupamento
+        // inteligente precisa sair junto -- ele junta versiculos ate encher o
+        // slide e ignora quantos por slide foram pedidos, entao Genesis 1:1-10
+        // saia em quatro slides em vez de dez.
+        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: 1, smartSplit: false }))
         drawerTabsData.update((a: any) => {
             if (!a.scripture) a.scripture = {}
             a.scripture.activeSubTab = bibliaId
@@ -478,7 +482,7 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
         return ""
     } finally {
         activeScripture.set(refAnterior)
-        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: porSlideAnterior }))
+        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: porSlideAnterior, smartSplit: agrupamentoAnterior }))
         drawerTabsData.update((a: any) => {
             if (a.scripture) a.scripture.activeSubTab = abaAnterior
             return a
