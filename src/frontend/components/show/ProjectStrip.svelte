@@ -38,7 +38,17 @@
                 return
             }
             if (item.type === "folder") return
-            saida.push({ id: item.id, nome: item.name || "—", grupo: grupoAtual, mes: mesAtual, dia: Number(item.name) || 0 })
+
+            // "07 Rede de Mulheres" -> dia 07 e nome proprio; nos cultos de data
+            // fixa o nome do projeto e so o dia, e o rotulo segue sendo o mes
+            const partes = (item.name || "").match(/^(\d{1,2})\s+(.+)$/)
+            saida.push({
+                id: item.id,
+                nome: partes ? partes[1] : item.name || "—",
+                grupo: partes ? partes[2] : grupoAtual,
+                mes: mesAtual,
+                dia: Number(partes ? partes[1] : item.name) || 0
+            })
         })
 
         return saida
@@ -110,7 +120,7 @@
         {#each cultos as culto (culto.id)}
             {@const itens = contarItens(culto.id)}
             {@const aberto = $activeProject === culto.id && !$projectView}
-            <button class="culto" class:aberto class:cheio={itens > 0} type="button" role="tab" aria-selected={aberto} data-id={culto.id} data-title="{culto.nome}{itens ? ` — ${itens} itens` : ''}" on:click={() => abrir(culto.id)}>
+            <button class="culto" class:aberto class:cheio={itens > 0} class:nomeado={culto.grupo.length > 3} type="button" role="tab" aria-selected={aberto} data-id={culto.id} data-title="{culto.nome}{itens ? ` — ${itens} itens` : ''}" on:click={() => abrir(culto.id)}>
                 {#if culto.grupo}<span class="grupo">{culto.grupo}</span>{/if}
                 <span class="dia">{culto.nome}</span>
                 <span class="pip"></span>
@@ -138,6 +148,7 @@
     .culto {
         flex: none;
         width: 50px;
+        max-width: 110px;
         padding: 8px 0 9px;
         border: none;
         border-radius: 10px;
@@ -152,6 +163,11 @@
             background-color 120ms ease,
             box-shadow 120ms ease;
     }
+    /* evento com nome proprio precisa de mais largura do que um dia */
+    .culto.nomeado {
+        width: auto;
+        padding-inline: 8px;
+    }
     .culto:hover {
         background: rgb(255 255 255 / 0.1);
     }
@@ -161,10 +177,15 @@
     }
 
     .grupo {
+        max-width: 100%;
         font-family: var(--font-mono);
         font-size: 8px;
         letter-spacing: 0.12em;
         color: #6f7077;
+        /* nome de evento e livre e pode ser longo; o dia abaixo nao pode sumir */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     .dia {
         font-family: var(--font-mono);

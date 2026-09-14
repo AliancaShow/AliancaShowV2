@@ -767,10 +767,15 @@ async function garantirPastasDeMidia() {
 
 /** "2026-09-06" -> pastas Alianca/2026/09-setembro + projeto "06" */
 const MESES = ["01-janeiro", "02-fevereiro", "03-marco", "04-abril", "05-maio", "06-junho", "07-julho", "08-agosto", "09-setembro", "10-outubro", "11-novembro", "12-dezembro"]
-function caminhoDoculto(cultoId: string) {
+function caminhoDoculto(cultoId: string, nome = "") {
     const data = cultoId.match(/^(\d{4})-(\d{2})-(\d{2})$/)
     if (!data) return null
-    return { pastas: [agenda.pasta, data[1], MESES[Number(data[2]) - 1]], projeto: data[3] }
+
+    // Culto de data fixa se identifica pelo dia; evento avulso, nao -- "07" nao
+    // diz nada, "07 Rede de Mulheres" diz. O dia continua na frente para a
+    // ordem do painel sair certa.
+    const projeto = nome.trim() ? `${data[3]} ${nome.trim()}`.slice(0, 60) : data[3]
+    return { pastas: [agenda.pasta, data[1], MESES[Number(data[2]) - 1]], projeto }
 }
 
 /**
@@ -984,7 +989,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
         const itens = Object.entries((culto as any)?.itens || {}).map(([chave, item]: any) => ({ ...item, chaveNoBanco: chave }))
         if (!itens.length) continue
 
-        const partes = caminhoDoculto(cultoId)
+        const partes = caminhoDoculto(cultoId, (culto as any)?.nome)
         if (!partes) continue
 
         const { id: pastaId, mudou: m1 } = garantirPastas(partes.pastas)
@@ -1160,89 +1165,93 @@ async function publicarLocais(cultos: { [id: string]: any }) {
     const escritas: { [caminho: string]: any } = {}
     const ano = new Date().getFullYear()
 
+    // o calendario da agenda mais o que ja existe no banco: o Extra nao tem
+    // cadencia, entao seus eventos so aparecem por aqui
+    const datas = new Set<string>(Object.keys(cultos))
     for (let mes = 0; mes < 12; mes++) {
-        for (const dia of diasDoMes(ano, mes)) {
-            const cultoId = `${ano}-${String(mes + 1).padStart(2, "0")}-${dia}`
-            const partes = caminhoDoculto(cultoId)
-            if (!partes) continue
+        for (const dia of diasDoMes(ano, mes)) datas.add(`${ano}-${String(mes + 1).padStart(2, "0")}-${dia}`)
+    }
 
-            const projetoId = garantirProjeto(partes.projeto, garantirPastas(partes.pastas).id).id
+    for (const cultoId of datas) {
+        const partes = caminhoDoculto(cultoId, cultos[cultoId]?.nome)
+        if (!partes) continue
 
-            // projeto que nao existe nao e projeto vazio: sem esta saida, uma
-            // leitura antes da hora leria o culto como esvaziado e apagaria
-            // tudo que a equipe mandou
-            const projeto = get(projects)[projetoId] as any
-            if (!projeto) continue
+        const projetoId = garantirProjeto(partes.projeto, garantirPastas(partes.pastas).id).id
 
-            const noProjeto = projeto.shows || []
-            const idsNoProjeto = new Set(noProjeto.map((entrada: any) => String(entrada?.id || "")))
+        // projeto que nao existe nao e projeto vazio: sem esta saida, uma
+        // leitura antes da hora leria o culto como esvaziado e apagaria
+        // tudo que a equipe mandou
+        const projeto = get(projects)[projetoId] as any
+        if (!projeto) continue
 
-            // o que ja veio do celular nao volta: seria o mesmo item duas vezes
-            const doRemote = new Set(vindosDoRemote[cultoId] || [])
+        const noProjeto = projeto.shows || []
+        const idsNoProjeto = new Set(noProjeto.map((entrada: any) => String(entrada?.id || "")))
 
-            // o que este computador ja publicou, pela referencia
-            const publicados = new Map<string, { chave: string; de: string }>()
-            Object.entries(cultos[cultoId]?.itens || {}).forEach(([chave, item]: any) => {
-                if (item?.tipo === "local" && item.ref) publicados.set(item.ref, { chave, de: item.porComputador || "" })
-            })
+        // o que ja veio do celular nao volta: seria o mesmo item duas vezes
+        const doRemote = new Set(vindosDoRemote[cultoId] || [])
 
-            noProjeto.forEach((entrada: any, ordem: number) => {
-                const referencia = String(entrada?.id || "")
-                if (!referencia) return
+        // o que este computador ja publicou, pela referencia
+        const publicados = new Map<string, { chave: string; de: string }>()
+        Object.entries(cultos[cultoId]?.itens || {}).forEach(([chave, item]: any) => {
+            if (item?.tipo === "local" && item.ref) publicados.set(item.ref, { chave, de: item.porComputador || "" })
+        })
 
-                // ATENCAO a ordem destas duas checagens. O item publicado daqui
-                // volta pela sincronizacao e entra no registro, entao passa a
-                // constar tambem como "vindo do celular". Perguntando primeiro
-                // pelo registro, ele nunca era reconhecido como ja publicado,
-                // sobrava na lista de descartes e era apagado do banco -- e na
-                // volta seguinte saia do projeto. Foi assim que tres louvores
-                // sumiram do culto de 20/09.
-                if (publicados.has(referencia)) {
-                    const publicado = publicados.get(referencia)!
-                    publicados.delete(referencia)
-                    // publicado antes de existir a marca de computador: assume
-                    // agora, senao ninguem poderia limpa-lo depois
-                    if (!publicado.de) escritas[`${caminho("cultos")}/${cultoId}/itens/${publicado.chave}/porComputador`] = meuId
-                    return
-                }
-                if (doRemote.has(referencia)) return
+        noProjeto.forEach((entrada: any, ordem: number) => {
+            const referencia = String(entrada?.id || "")
+            if (!referencia) return
 
-                escritas[`${caminho("cultos")}/${cultoId}/data`] = cultoId
-                escritas[`${caminho("cultos")}/${cultoId}/itens/${chaveLocal(referencia)}`] = {
-                    nome: nomeDoItemLocal(entrada).slice(0, 60),
-                    tipo: "local",
-                    midia: entrada.type || "show",
-                    ref: referencia,
-                    // de qual computador saiu: so quem publicou pode apagar, senao
-                    // a maquina de casa limparia o que a da igreja montou
-                    porComputador: meuId,
-                    uid: usuario.uid,
-                    email: usuario.email || "",
-                    // a ordem do projeto vira a ordem no celular: a lista de la
-                    // e ordenada por este campo
-                    enviadoEm: Date.now() + ordem
-                }
-            })
+            // ATENCAO a ordem destas duas checagens. O item publicado daqui
+            // volta pela sincronizacao e entra no registro, entao passa a
+            // constar tambem como "vindo do celular". Perguntando primeiro
+            // pelo registro, ele nunca era reconhecido como ja publicado,
+            // sobrava na lista de descartes e era apagado do banco -- e na
+            // volta seguinte saia do projeto. Foi assim que tres louvores
+            // sumiram do culto de 20/09.
+            if (publicados.has(referencia)) {
+                const publicado = publicados.get(referencia)!
+                publicados.delete(referencia)
+                // publicado antes de existir a marca de computador: assume
+                // agora, senao ninguem poderia limpa-lo depois
+                if (!publicado.de) escritas[`${caminho("cultos")}/${cultoId}/itens/${publicado.chave}/porComputador`] = meuId
+                return
+            }
+            if (doRemote.has(referencia)) return
 
-            // sobrou publicado o que saiu do projeto aqui: tira do celular. O
-            // que outro computador publicou fica -- de la ele nao saiu, e quem
-            // apaga e quem montou
-            publicados.forEach(({ chave, de }) => {
-                if (de && de !== meuId) return
-                escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
-            })
+            escritas[`${caminho("cultos")}/${cultoId}/data`] = cultoId
+            escritas[`${caminho("cultos")}/${cultoId}/itens/${chaveLocal(referencia)}`] = {
+                nome: nomeDoItemLocal(entrada).slice(0, 60),
+                tipo: "local",
+                midia: entrada.type || "show",
+                ref: referencia,
+                // de qual computador saiu: so quem publicou pode apagar, senao
+                // a maquina de casa limparia o que a da igreja montou
+                porComputador: meuId,
+                uid: usuario.uid,
+                email: usuario.email || "",
+                // a ordem do projeto vira a ordem no celular: a lista de la
+                // e ordenada por este campo
+                enviadoEm: Date.now() + ordem
+            }
+        })
 
-            // O mesmo para o que veio do celular. Antes a remocao so andava num
-            // sentido: tirar do culto aqui nao mudava nada la, e a
-            // sincronizacao seguinte trazia o item de volta. So entra na conta
-            // o que este computador viu entrar no projeto -- envio recem-feito,
-            // ainda nao sincronizado, nao esta no mapa e nao corre risco.
-            Object.entries(chavesPorRef[cultoId] || {}).forEach(([referencia, chave]) => {
-                if (idsNoProjeto.has(referencia)) return
-                escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
-                delete chavesPorRef[cultoId][referencia]
-            })
-        }
+        // sobrou publicado o que saiu do projeto aqui: tira do celular. O
+        // que outro computador publicou fica -- de la ele nao saiu, e quem
+        // apaga e quem montou
+        publicados.forEach(({ chave, de }) => {
+            if (de && de !== meuId) return
+            escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
+        })
+
+        // O mesmo para o que veio do celular. Antes a remocao so andava num
+        // sentido: tirar do culto aqui nao mudava nada la, e a
+        // sincronizacao seguinte trazia o item de volta. So entra na conta
+        // o que este computador viu entrar no projeto -- envio recem-feito,
+        // ainda nao sincronizado, nao esta no mapa e nao corre risco.
+        Object.entries(chavesPorRef[cultoId] || {}).forEach(([referencia, chave]) => {
+            if (idsNoProjeto.has(referencia)) return
+            escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
+            delete chavesPorRef[cultoId][referencia]
+        })
     }
 
     if (!Object.keys(escritas).length) return
