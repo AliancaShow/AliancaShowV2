@@ -430,7 +430,13 @@
                         <!-- AliancaShow: titulo do painel fica fixo. O nome do projeto ja
                              aparece na propria arvore, e trocar o titulo dava a impressao
                              de que o painel tinha mudado de tela. Continua na tooltip. -->
-                        <p style="font-size: 1.08em;margin-right: 20px;"><T id="remote.projects" /></p>
+                        <p class="tituloEventos">Eventos</p>
+
+                        <div class="agendas">
+                            {#each AGENDAS as op}
+                                <button class="agenda" class:marcada={$agendaId === op.id} on:click={() => escolherAgenda(op.id)}>{op.nome}</button>
+                            {/each}
+                        </div>
 
                         <div class="right context">
                             <MaterialButton style="width: 32px;height: 100%;padding: 0.3em 0.5em;border-bottom-right-radius: 10px;{showProjectDropdown ? '' : 'opacity: 0.8;'}" title="create_show.more_options" icon="more" on:click={() => (showProjectDropdown = !showProjectDropdown)} white={!showProjectDropdown}>
