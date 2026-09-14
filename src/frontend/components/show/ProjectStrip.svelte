@@ -26,16 +26,19 @@
     $: cultos = montarCultos(tree)
 
     function montarCultos(itens: Tree[]) {
-        const saida: { id: string; nome: string; grupo: string }[] = []
+        const saida: { id: string; nome: string; grupo: string; mes: number; dia: number }[] = []
         let grupoAtual = ""
+        let mesAtual = 0
 
         itens.forEach((item) => {
             if (item.type === "grupo") {
                 grupoAtual = abreviar(item.name || "")
+                // "09-setembro" -> 9, para saber qual culto esta mais perto de hoje
+                mesAtual = Number((item.name || "").match(/^\d+/)?.[0] || 0)
                 return
             }
             if (item.type === "folder") return
-            saida.push({ id: item.id, nome: item.name || "—", grupo: grupoAtual })
+            saida.push({ id: item.id, nome: item.name || "—", grupo: grupoAtual, mes: mesAtual, dia: Number(item.name) || 0 })
         })
 
         return saida
@@ -61,9 +64,37 @@
         openProject(id)
     }
 
-    // Mantém o culto aberto sempre visível na faixa, inclusive quando ele é
-    // trocado por outro caminho (atalho, clique num show, sincronização).
-    $: if ($activeProject && faixaElem) centralizar($activeProject)
+    // Mantém à vista o culto aberto -- ou, quando nenhum daqui está aberto, o
+    // mais próximo de hoje. Trocar de agenda cai nesse caso: o culto que estava
+    // aberto é da outra, e sem isto a faixa abria em janeiro.
+    $: if (cultos.length && faixaElem) posicionar($activeProject)
+
+    function posicionar(aberto: string | null) {
+        const alvo = cultos.some((c) => c.id === aberto) ? aberto! : maisPerto()
+        if (alvo) centralizar(alvo)
+    }
+
+    function maisPerto() {
+        const hoje = new Date()
+        const chaveHoje = (hoje.getMonth() + 1) * 100 + hoje.getDate()
+        const proximo = cultos.find((c) => c.mes * 100 + c.dia >= chaveHoje)
+        return (proximo || cultos[cultos.length - 1])?.id || ""
+    }
+
+    /**
+     * Roda do mouse anda na horizontal aqui.
+     *
+     * A faixa rola de lado e a barra fica escondida, entao no computador nao
+     * havia como chegar aos cultos fora da tela -- e num painel estreito isso e
+     * quase todo o ano.
+     */
+    function rolar(e: WheelEvent) {
+        if (!faixaElem || e.shiftKey) return
+        const passo = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+        if (!passo) return
+        e.preventDefault()
+        faixaElem.scrollLeft += passo
+    }
 
     async function centralizar(id: string) {
         await tick()
@@ -71,13 +102,11 @@
         alvo?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" })
     }
 
-    onMount(() => {
-        if ($activeProject) centralizar($activeProject)
-    })
+    onMount(() => posicionar($activeProject))
 </script>
 
 {#if cultos.length}
-    <div class="faixa" bind:this={faixaElem} role="tablist" aria-label="Cultos">
+    <div class="faixa" bind:this={faixaElem} role="tablist" aria-label="Cultos" on:wheel={rolar}>
         {#each cultos as culto (culto.id)}
             {@const itens = contarItens(culto.id)}
             {@const aberto = $activeProject === culto.id && !$projectView}

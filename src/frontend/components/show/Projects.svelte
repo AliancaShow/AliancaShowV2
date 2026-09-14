@@ -432,11 +432,11 @@
                              de que o painel tinha mudado de tela. Continua na tooltip. -->
                         <p class="tituloEventos">Eventos</p>
 
-                        <div class="agendas">
+                        <select class="seletorAgenda" value={$agendaId} on:change={(e) => escolherAgenda(e.currentTarget.value)}>
                             {#each AGENDAS as op}
-                                <button class="agenda" class:marcada={$agendaId === op.id} on:click={() => escolherAgenda(op.id)}>{op.nome}</button>
+                                <option value={op.id}>{op.nome}</option>
                             {/each}
-                        </div>
+                        </select>
 
                         <div class="right context">
                             <MaterialButton style="width: 32px;height: 100%;padding: 0.3em 0.5em;border-bottom-right-radius: 10px;{showProjectDropdown ? '' : 'opacity: 0.8;'}" title="create_show.more_options" icon="more" on:click={() => (showProjectDropdown = !showProjectDropdown)} white={!showProjectDropdown}>
@@ -535,11 +535,11 @@
                     <!-- Tres cultos distintos dividem este painel; o seletor fica
                          junto do titulo porque e a primeira coisa a decidir ao
                          abrir o app: de qual deles e o dia. -->
-                    <div class="agendas">
+                    <select class="seletorAgenda" value={$agendaId} on:change={(e) => escolherAgenda(e.currentTarget.value)}>
                         {#each AGENDAS as op}
-                            <button class="agenda" class:marcada={$agendaId === op.id} on:click={() => escolherAgenda(op.id)}>{op.nome}</button>
+                            <option value={op.id}>{op.nome}</option>
                         {/each}
-                    </div>
+                    </select>
                 {/if}
 
                 {#if !showProjectsOptions}
@@ -687,34 +687,32 @@
 
     /* o titulo deixa de ser centralizado: o seletor de agenda entra ao lado */
     .tituloEventos {
+        flex: none;
         font-size: 1.08em;
         margin-inline-end: auto;
+        white-space: nowrap;
     }
 
-    .agendas {
-        display: flex;
-        gap: 3px;
+    /* um campo so, e nao tres botoes: lado a lado eles comiam a largura do
+       painel e o titulo virava "Eve..." */
+    .seletorAgenda {
         margin-inline-end: 34px;
-    }
-    .agenda {
-        padding: 3px 8px;
-        border: none;
+        padding: 3px 6px;
+        border: 1px solid rgb(255 255 255 / 0.12);
         border-radius: 7px;
-        background: transparent;
+        background: rgb(255 255 255 / 0.06);
         color: inherit;
         font-family: inherit;
-        font-size: 0.82em;
+        font-size: 0.85em;
         font-weight: 500;
-        opacity: 0.55;
         cursor: pointer;
     }
-    .agenda:hover {
-        background: rgb(255 255 255 / 0.07);
-        opacity: 0.8;
-    }
-    .agenda.marcada {
+    .seletorAgenda:hover {
         background: rgb(255 255 255 / 0.1);
-        opacity: 1;
+    }
+    .seletorAgenda option {
+        background: var(--primary-darker);
+        color: var(--text);
     }
 
     .tabs .header {
