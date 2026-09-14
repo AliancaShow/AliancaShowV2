@@ -33,7 +33,7 @@ import { addToMediaFolder, bundleMediaFiles, getDataFolderPath, getDataFolderRoo
 import { getMachineId } from "../utils/helpers"
 import { LyricSearch } from "../utils/LyricSearch"
 import { closeMidiInPorts, getMidiInputs, getMidiOutputs, receiveMidi, sendMidi } from "../utils/midi"
-import { deleteShows, deleteShowsNotIndexed, getAllShows, getEmptyShows, refreshAllShows } from "../utils/shows"
+import { deleteShows, deleteShowsNotIndexed, getAllShows, getEmptyShows, nomeDeArquivoDeShow, refreshAllShows } from "../utils/shows"
 import { correctSpelling } from "../utils/spellcheck"
 import { executeSpotifyCommand, getSpotifyState } from "../utils/spotify"
 import { sendToMain } from "./main"
@@ -327,7 +327,9 @@ function readBiblesFolder() {
 // SHOW
 export function loadShow(msg: { id: string; name: string }) {
     const showsFolder = getDataFolderPath("shows")
-    const filePath = path.join(showsFolder, (msg.name || msg.id) + ".show")
+    // o nome pode ter ":" e o arquivo nunca tem -- sem esta conversao o show
+    // simplesmente nao abre, e a falha e silenciosa: volta "nao encontrado"
+    const filePath = path.join(showsFolder, nomeDeArquivoDeShow(msg.name, msg.id) + ".show")
     const show = loadFile(filePath, msg.id)
 
     return show

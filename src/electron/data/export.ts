@@ -79,7 +79,7 @@ export function startExport(_e: Electron.IpcMainEvent, msg: Message) {
 
     const exportFolder = getDataFolderPath("exports")
     const showNames: string[] = msg.data.showNames || []
-    const shows = getShowContent(showNames.map((name) => name + ".show"))
+    const shows = getShowContent(showNames.map((name) => nomeDeArquivoDeShow(name) + ".show"))
 
     if (msg.data.type === "show") exportShow({ shows, path: exportFolder })
     else if (msg.data.type === "txt") exportTXT({ shows, path: exportFolder })

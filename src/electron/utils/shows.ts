@@ -89,7 +89,7 @@ export function deleteShows(data: { shows: { name: string; id: string }[] }) {
     const showsPath = getDataFolderPath("shows")
 
     data.shows.forEach(({ id, name }) => {
-        name = (name || id) + ".show"
+        name = nomeDeArquivoDeShow(name, id) + ".show"
         const showPath: string = path.join(showsPath, name)
         deleteFile(showPath)
         deleted.push(name)
@@ -101,7 +101,10 @@ export function deleteShows(data: { shows: { name: string; id: string }[] }) {
 
 export function deleteShowsNotIndexed(data: { shows: TrimmedShows }) {
     // get all names
-    const names: string[] = Object.entries(data.shows).map(([id, { name }]) => (name || id) + ".show")
+    // ATENCAO: o que nao estiver nesta lista e APAGADO do disco. Com o nome
+    // exibido ("Juizes 8:1-5 NVI") em vez do nome de arquivo, nenhum versiculo
+    // constaria -- e todos seriam apagados como se fossem sobra.
+    const names: string[] = Object.entries(data.shows).map(([id, { name }]) => nomeDeArquivoDeShow(name, id) + ".show")
 
     const showsPath = getDataFolderPath("shows")
 
