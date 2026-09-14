@@ -20,8 +20,13 @@ export function checkName(name = "", showId = "") {
         return name
     }
 
+    // A comparacao e pelo nome de ARQUIVO, nao pelo nome exibido: "Louvor: 1"
+    // e "Louvor, 1" sao nomes diferentes que gravam no mesmo arquivo, e um
+    // apagaria o outro em silencio. Com o ":" liberado no nome isso deixou de
+    // ser hipotese.
+    const comoArquivo = (valor: string) => formatToFileName(valor || "").toLowerCase()
     let number = 1
-    while (Object.values(get(shows)).find((a) => a.name?.toLowerCase() === (number > 1 ? name.toLowerCase() + " " + number : name.toLowerCase()))) number++
+    while (Object.values(get(shows)).find((a) => comoArquivo(a.name || "") === comoArquivo(number > 1 ? `${name} ${number}` : name))) number++
 
     // add number if existing name, and trim away spaces from the start/end
     return (number > 1 ? name + " " + number : name).trim()

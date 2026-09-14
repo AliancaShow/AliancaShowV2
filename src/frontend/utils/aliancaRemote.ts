@@ -1083,9 +1083,11 @@ function tirarRepetidos(projetoId: string) {
     const vistos = new Set<string>()
     const limpos = itens.filter((item) => {
         const id = String(item?.id || "")
-        // caminho de arquivo pode repetir de proposito (a mesma foto duas vezes
-        // no culto nao e engano), entao so shows entram nesta conta
-        if (!id || id.includes("\\") || id.includes("/")) return true
+        // So versiculo. Louvor repetido no culto costuma ser de proposito -- o
+        // mesmo cantado na entrada e no final -- e foto repetida tambem; tirar
+        // seria desfazer o que o operador montou. A duplicacao que esta funcao
+        // conserta so acontecia ao remontar versiculo.
+        if (!id.startsWith("bib-")) return true
         if (vistos.has(id)) return false
         vistos.add(id)
         return true
