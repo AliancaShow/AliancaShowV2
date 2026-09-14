@@ -864,11 +864,20 @@ async function publicarLocais(cultos: { [id: string]: any }) {
 
             noProjeto.forEach((entrada: any, ordem: number) => {
                 const referencia = String(entrada?.id || "")
-                if (!referencia || doRemote.has(referencia)) return
+                if (!referencia) return
+
+                // ATENCAO a ordem destas duas checagens. O item publicado daqui
+                // volta pela sincronizacao e entra no registro, entao passa a
+                // constar tambem como "vindo do celular". Perguntando primeiro
+                // pelo registro, ele nunca era reconhecido como ja publicado,
+                // sobrava na lista de descartes e era apagado do banco -- e na
+                // volta seguinte saia do projeto. Foi assim que tres louvores
+                // sumiram do culto de 20/09.
                 if (publicados.has(referencia)) {
                     publicados.delete(referencia)
                     return
                 }
+                if (doRemote.has(referencia)) return
 
                 escritas[`cultos/${cultoId}/data`] = cultoId
                 escritas[`cultos/${cultoId}/itens/${chaveLocal(referencia)}`] = {
