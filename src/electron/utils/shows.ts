@@ -202,7 +202,11 @@ export function refreshAllShows() {
 
         if (!show || !show[1]) return
 
-        const trimmedShow = trimShow({ ...show[1], name: name.replace(".show", "") })
+        // O nome guardado dentro do arquivo manda; o nome do arquivo e so a
+        // reserva, para quem organiza a pasta a mao. Lendo o arquivo primeiro,
+        // "Juizes 8:1-5 NVI" voltava sempre como "Juizes 8,1-5 NVI": o ":" nao
+        // cabe num nome de arquivo no Windows e e trocado na gravacao.
+        const trimmedShow = trimShow({ ...show[1], name: show[1].name || name.replace(".show", "") })
         if (trimmedShow) newShows[show[0]] = trimmedShow
     }
 
@@ -239,7 +243,7 @@ export async function getEmptyShows(data: { cached: Shows }) {
         // check that it is empty
         if (showHasLayoutContent(show[1]) || getShowTextContent(show[1]).length) return null
 
-        return { id: show[0], name: name.replace(".show", "") }
+        return { id: show[0], name: show[1].name || name.replace(".show", "") }
     }
 
     return emptyShows
