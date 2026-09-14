@@ -12,6 +12,7 @@ import { activeProject, activeShow, outputs, outputDisplay, projects, shows, sho
 import { openProjectItem } from "../components/show/project"
 import { getActiveScripturesContent, getScriptureShow, loadJsonBible } from "../components/drawer/bible/scripture"
 import { history } from "../components/helpers/history"
+import { loadShows } from "../components/helpers/setShow"
 import { activeScripture, drawerTabsData, scriptureSettings, scriptures } from "../stores"
 import { requestMain, sendMain } from "../IPC/main"
 import { folders, media, mediaFolders, projects, shows } from "../stores"
@@ -444,8 +445,17 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
 
     const showId = `bib-${livroNumero}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
 
-    // ja existe: so referenciar
-    if (get(shows)[showId]) return showId
+    // Ja existe: so referenciar, desde que tenha um slide por versiculo. Um
+    // show montado por uma versao anterior -- quando o agrupamento por tamanho
+    // ainda mandava -- ficou com menos slides do que versiculos, e sem esta
+    // conferencia seria reaproveitado para sempre: Genesis 1:1-10 voltaria com
+    // quatro slides por mais que a regra tivesse mudado.
+    if (get(shows)[showId]) {
+        await loadShows([showId])
+        const existente: any = get(showsCache)[showId]
+        const leiaute = existente?.layouts?.[existente?.settings?.activeLayout || Object.keys(existente?.layouts || {})[0] || ""]
+        if ((leiaute?.slides?.length || 0) === versiculos.length) return showId
+    }
 
     const refAnterior = get(activeScripture)
     const abaAnterior = (get(drawerTabsData) as any).scripture?.activeSubTab
