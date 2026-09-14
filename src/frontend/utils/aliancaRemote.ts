@@ -319,7 +319,10 @@ function publicarEstado() {
     if (estadoAgendado) return
     estadoAgendado = setTimeout(() => {
         estadoAgendado = null
-        set(ref(db!, "estado"), novo).catch((erro) => console.error("Falha ao publicar o estado:", erro))
+        set(ref(db!, "estado"), novo).catch((erro) => {
+            ultimoEstado = ""
+            console.error("Falha ao publicar o estado:", erro)
+        })
     }, 500)
 }
 
@@ -349,7 +352,13 @@ function publicarCatalogo() {
     if (assinatura === ultimoCatalogo) return
     ultimoCatalogo = assinatura
 
-    set(ref(db!, "catalogo"), catalogo).catch((erro) => console.error("Falha ao publicar o catalogo:", erro))
+    set(ref(db!, "catalogo"), catalogo).catch((erro) => {
+        // limpa a assinatura: sem isso uma escrita recusada (regra do banco,
+        // internet fora) faria o app achar que ja publicou e nunca mais tentar.
+        // Foi assim que o catalogo ficou meses sem sair daqui.
+        ultimoCatalogo = ""
+        console.error("Falha ao publicar o catalogo:", erro)
+    })
 }
 
 /** a primeira biblia local instalada -- e nela que as referencias sao resolvidas */
@@ -389,7 +398,10 @@ async function publicarIndiceBiblia() {
     if (assinatura === ultimoIndiceBiblia) return
     ultimoIndiceBiblia = assinatura
 
-    set(ref(db!, "biblia"), indice).catch((erro) => console.error("Falha ao publicar o indice da Biblia:", erro))
+    set(ref(db!, "biblia"), indice).catch((erro) => {
+        ultimoIndiceBiblia = ""
+        console.error("Falha ao publicar o indice da Biblia:", erro)
+    })
 }
 
 /**
