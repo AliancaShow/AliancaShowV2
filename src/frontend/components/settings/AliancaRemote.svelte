@@ -5,7 +5,7 @@
     import MaterialButton from "../inputs/MaterialButton.svelte"
     import MaterialTextInput from "../inputs/MaterialTextInput.svelte"
 
-    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "" }
+    let estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca" }
     let email = ""
     let senha = ""
 

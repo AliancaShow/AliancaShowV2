@@ -6,6 +6,7 @@
     import { sendMain } from "../../IPC/main"
     import { activePopup, activeProject, activeRename, contentProviderData, dictionary, drawer, editingProjectTemplate, focusMode, folders, openedFolders, projects, projectTemplates, projectView, providerConnections, showRecentlyUsedProjects, sorted, special } from "../../stores"
     import { translateText } from "../../utils/language"
+    import { AGENDAS, agendaId, carregarAgenda, escolherAgenda } from "../../utils/aliancaRemote"
     import { getAccess } from "../../utils/profile"
     import { exportProject } from "../export/project"
     import { shareProjectLink } from "../export/projectLink"
@@ -118,9 +119,24 @@
             })
         }
 
-        percorrer("/", "", 0)
+        // So a agenda escolhida. Alianca, Impulso e Extra sao cultos
+        // diferentes, com equipes e datas proprias -- misturar os tres numa
+        // lista so foi justamente o que tornou o painel confuso.
+        const raiz = itens.find((a) => a.type === "folder" && a.parent === "/" && a.name === pastaDaAgenda)
+        percorrer(raiz ? raiz.id : "/", "", 0)
+
+        // projeto solto na raiz aparece em qualquer agenda: criado pelo "+", ele
+        // nasce fora das pastas, e sumir da lista seria pior do que repetir
+        if (raiz) (porPai["/"] || []).filter((a) => a.type !== "folder").forEach((projeto) => saida.push({ ...projeto, index: 0, path: "" }))
+
         return saida
     }
+
+    $: pastaDaAgenda = AGENDAS.find((a) => a.id === $agendaId)?.pasta || "Alianca"
+    // refaz a lista quando a agenda muda
+    $: if (pastaDaAgenda) tree = acharPlano(folderSorted)
+
+    carregarAgenda()
 
     let folderSorted: Tree[] = []
     function sortFolders(parent = "/", index = 0, path = "") {
@@ -507,7 +523,18 @@
                 {/if}
 
                 <!-- <Icon id="folder" white right /> -->
-                <p style="font-size: 1.08em;{showProjectsOptions ? 'margin-left: 20px;' : 'margin-right: 20px;'}"><T id="remote.projects" /></p>
+                <p class="tituloEventos" style="{showProjectsOptions ? 'margin-left: 20px;' : ''}">Eventos</p>
+
+                {#if !showProjectsOptions}
+                    <!-- Tres cultos distintos dividem este painel; o seletor fica
+                         junto do titulo porque e a primeira coisa a decidir ao
+                         abrir o app: de qual deles e o dia. -->
+                    <div class="agendas">
+                        {#each AGENDAS as op}
+                            <button class="agenda" class:marcada={$agendaId === op.id} on:click={() => escolherAgenda(op.id)}>{op.nome}</button>
+                        {/each}
+                    </div>
+                {/if}
 
                 {#if !showProjectsOptions}
                     <div class="right">
@@ -652,6 +679,38 @@
     justify-content: space-between; */
     }
 
+    /* o titulo deixa de ser centralizado: o seletor de agenda entra ao lado */
+    .tituloEventos {
+        font-size: 1.08em;
+        margin-inline-end: auto;
+    }
+
+    .agendas {
+        display: flex;
+        gap: 3px;
+        margin-inline-end: 34px;
+    }
+    .agenda {
+        padding: 3px 8px;
+        border: none;
+        border-radius: 7px;
+        background: transparent;
+        color: inherit;
+        font-family: inherit;
+        font-size: 0.82em;
+        font-weight: 500;
+        opacity: 0.55;
+        cursor: pointer;
+    }
+    .agenda:hover {
+        background: rgb(255 255 255 / 0.07);
+        opacity: 0.8;
+    }
+    .agenda.marcada {
+        background: rgb(255 255 255 / 0.1);
+        opacity: 1;
+    }
+
     .tabs .header {
         position: absolute;
         top: 0;
@@ -668,7 +727,7 @@
         /* padding: 5px 0; */
 
         display: flex;
-        justify-content: center;
+        justify-content: flex-start;
         align-items: center;
 
         backdrop-filter: blur(10px);

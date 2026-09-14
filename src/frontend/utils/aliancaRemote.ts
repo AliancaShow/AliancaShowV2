@@ -1,7 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app"
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, type Auth } from "firebase/auth"
 import { getDatabase, onValue, ref, set, update, type Database } from "firebase/database"
-import { get } from "svelte/store"
+import { get, writable } from "svelte/store"
 import { uid } from "uid"
 import { Main } from "../../types/IPC/Main"
 import { OutputHelper } from "../components/helpers/OutputHelper"
@@ -41,10 +41,75 @@ const firebaseConfig = {
     appId: "1:609682479414:web:3ccdafe7d59d35ac3efb97"
 }
 
-// as duas raizes, que viram pastas de projeto e tambem pastas de midia
-const RAIZES = ["Alianca"]
+/**
+ * As agendas.
+ *
+ * Sao dois cultos distintos, cada um com seu computador: Alianca todo domingo
+ * e Impulso a cada quinze dias no sabado. Nao dividem nada -- nem projeto, nem
+ * ordem do culto, nem catalogo -- entao no banco cada uma tem seu proprio
+ * espaco, e aqui cada instalacao escolhe qual opera.
+ *
+ * As datas nunca se cruzam (sabado contra domingo), mas a separacao nao se
+ * apoia nisso: e o caminho que separa, nao o calendario.
+ */
+export type Agenda = { id: string; nome: string; pasta: string; dia: number; cada: number; inicio: string }
 
-export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number; principal: boolean; dono: string }
+export const AGENDAS: Agenda[] = [
+    { id: "alianca", nome: "Aliança", pasta: "Alianca", dia: 0, cada: 7, inicio: "" },
+    // a cada 15 dias contados a partir de 19/09/2026, o proximo Impulso
+    { id: "impulso", nome: "Impulso", pasta: "Impulso", dia: 6, cada: 14, inicio: "2026-09-19" },
+    // sem cadencia: evento avulso, criado a mao quando aparece
+    { id: "extra", nome: "Extra", pasta: "Extra", dia: -1, cada: 0, inicio: "" }
+]
+
+let agenda: Agenda = AGENDAS[0]
+
+/** para a tela acompanhar a troca; o valor que manda continua sendo o de cima */
+export const agendaId = writable(AGENDAS[0].id)
+
+export function agendaAtual() {
+    return agenda
+}
+
+export async function escolherAgenda(id: string) {
+    const nova = AGENDAS.find((a) => a.id === id)
+    if (!nova || nova.id === agenda.id) return
+
+    agenda = nova
+    agendaId.set(nova.id)
+    sendMain(Main.SET_STORE_VALUE, { file: "config", key: "aliancaAgenda", value: nova.id })
+
+    // o que estava guardado e de outro culto: comecar limpo evita que um
+    // registro do Alianca mande apagar item do Impulso
+    vindosDoRemote = {}
+    chavesPorRef = {}
+    guardarRegistro()
+
+    estado.agenda = nova.id
+    avisar()
+
+    // reassina tudo: os caminhos mudaram
+    if (estado.ligado) religar()
+}
+
+let agendaCarregada = false
+
+export async function carregarAgenda() {
+    if (agendaCarregada) return
+    agendaCarregada = true
+
+    const guardada = await requestMain(Main.GET_STORE_VALUE, { file: "config", key: "aliancaAgenda" })
+    agenda = AGENDAS.find((a) => a.id === guardada) || AGENDAS[0]
+    agendaId.set(agenda.id)
+    estado.agenda = agenda.id
+}
+
+/** raiz de tudo o que e desta agenda no banco */
+function caminho(resto: string) {
+    return `agendas/${agenda.id}/${resto}`
+}
+
+export type EstadoRemote = { ligado: boolean; entrando: boolean; email: string; erro: string; ultimaSync: number; baixando: number; principal: boolean; dono: string; agenda: string }
 
 let app: FirebaseApp | null = null
 let auth: Auth | null = null
@@ -59,7 +124,7 @@ let pararDono: (() => void) | null = null
 let batidaDono: ReturnType<typeof setInterval> | null = null
 let aoMudarEstado: ((e: EstadoRemote) => void) | null = null
 
-const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "" }
+const estado: EstadoRemote = { ligado: false, entrando: false, email: "", erro: "", ultimaSync: 0, baixando: 0, principal: false, dono: "", agenda: "alianca" }
 
 function avisar() {
     aoMudarEstado?.({ ...estado })
@@ -92,35 +157,57 @@ function iniciar() {
         avisar()
 
         if (usuario) {
-            ouvirCultos()
-            ouvirComandos()
-            observarEstadoDaSaida()
-            observarCatalogo()
-            observarBiblia()
-            observarProjetos()
-            prepararIdentidade().then(observarDono)
+            carregarAgenda().then(ligarObservadores)
         } else {
-            pararOuvinte?.()
-            pararOuvinte = null
-            pararComandos?.()
-            pararComandos = null
-            pararEstado?.()
-            pararEstado = null
-            pararCatalogo?.()
-            pararCatalogo = null
-            pararBiblia?.()
-            pararBiblia = null
-            pararProjetos?.()
-            pararProjetos = null
-            pararDono?.()
-            pararDono = null
-            if (batidaDono) clearInterval(batidaDono)
-            batidaDono = null
-            donoAtual = null
-            estado.principal = false
-            estado.dono = ""
+            desligarObservadores()
         }
     })
+}
+
+function ligarObservadores() {
+    ouvirCultos()
+    ouvirComandos()
+    observarEstadoDaSaida()
+    observarCatalogo()
+    observarBiblia()
+    observarProjetos()
+    prepararIdentidade().then(observarDono)
+}
+
+function desligarObservadores() {
+    pararOuvinte?.()
+    pararOuvinte = null
+    pararComandos?.()
+    pararComandos = null
+    pararEstado?.()
+    pararEstado = null
+    pararCatalogo?.()
+    pararCatalogo = null
+    pararBiblia?.()
+    pararBiblia = null
+    pararProjetos?.()
+    pararProjetos = null
+    pararDono?.()
+    pararDono = null
+    if (batidaDono) clearInterval(batidaDono)
+    batidaDono = null
+    donoAtual = null
+    estado.principal = false
+    estado.dono = ""
+}
+
+/**
+ * Trocar de agenda muda todos os caminhos, entao nao basta mudar a variavel:
+ * as assinaturas abertas continuariam ouvindo o culto antigo. Aqui tudo e
+ * refeito, e as assinaturas de estado voltam zeradas para publicar de novo no
+ * lugar certo.
+ */
+function religar() {
+    desligarObservadores()
+    ultimoEstado = ""
+    ultimoCatalogo = ""
+    ultimoIndiceBiblia = ""
+    ligarObservadores()
 }
 
 export async function entrar(email: string, senha: string) {
@@ -192,7 +279,7 @@ function ouvirCultos() {
     if (!db || pararOuvinte) return
 
     pararOuvinte = onValue(
-        ref(db, "cultos"),
+        ref(db, caminho("cultos")),
         (snap) => {
             enfileirar(snap.val() || {})
         },
@@ -245,7 +332,7 @@ function ouvirComandos() {
     if (!db || pararComandos) return
 
     pararComandos = onValue(
-        ref(db!, "comando"),
+        ref(db!, caminho("comando")),
         (snap) => {
             const valor = snap.val()
             if (!valor?.acao) return
@@ -256,7 +343,7 @@ function ouvirComandos() {
             // sozinho no domingo de manha. Passado o prazo, limpa sem executar.
             const idade = Date.now() - (valor.em || 0)
             if (idade > VALIDADE_COMANDO) {
-                set(ref(db!, "comando"), null).catch(() => {})
+                set(ref(db!, caminho("comando")), null).catch(() => {})
                 return
             }
 
@@ -269,7 +356,7 @@ function ouvirComandos() {
             executar(valor)
 
             // limpa para o mesmo toque nao repetir numa reconexao
-            set(ref(db!, "comando"), null).catch((erro) => console.error("Falha ao limpar o comando:", erro))
+            set(ref(db!, caminho("comando")), null).catch((erro) => console.error("Falha ao limpar o comando:", erro))
         },
         (erro) => {
             console.error("Falha ao ouvir comandos remotos:", erro)
@@ -335,7 +422,7 @@ async function reivindicar(forcado = false) {
     if (!forcado && !souPrincipal() && !postoVago()) return
 
     try {
-        await set(ref(db, "controle/dono"), { id: meuId, nome: meuNome, em: Date.now() })
+        await set(ref(db, caminho("controle/dono")), { id: meuId, nome: meuNome, em: Date.now() })
     } catch (erro) {
         console.error("Falha ao anunciar o computador principal:", erro)
     }
@@ -349,7 +436,7 @@ export function assumirControle() {
 function observarDono() {
     if (pararDono) return
 
-    pararDono = onValue(ref(db!, "controle/dono"), (snap) => {
+    pararDono = onValue(ref(db!, caminho("controle/dono")), (snap) => {
         donoAtual = snap.val()
         estado.principal = souPrincipal()
         estado.dono = donoAtual?.nome || ""
@@ -408,7 +495,7 @@ function publicarEstado() {
     if (estadoAgendado) return
     estadoAgendado = setTimeout(() => {
         estadoAgendado = null
-        set(ref(db!, "estado"), novo).catch((erro) => {
+        set(ref(db!, caminho("estado")), novo).catch((erro) => {
             ultimoEstado = ""
             console.error("Falha ao publicar o estado:", erro)
         })
@@ -441,7 +528,7 @@ function publicarCatalogo() {
     if (assinatura === ultimoCatalogo) return
     ultimoCatalogo = assinatura
 
-    set(ref(db!, "catalogo"), catalogo).catch((erro) => {
+    set(ref(db!, caminho("catalogo")), catalogo).catch((erro) => {
         // limpa a assinatura: sem isso uma escrita recusada (regra do banco,
         // internet fora) faria o app achar que ja publicou e nunca mais tentar.
         // Foi assim que o catalogo ficou meses sem sair daqui.
@@ -664,19 +751,14 @@ async function garantirPastasDeMidia() {
     const raizOnline: string = await requestMain(Main.ALIANCA_PASTA_ONLINE, undefined as any)
     if (!raizOnline) return false
 
-    let mudou = false
-    for (const nome of RAIZES) {
-        const caminho = `${raizOnline}\\${nome}`
-        const jaTem = Object.values(get(mediaFolders)).some((f: any) => f.path === caminho)
-        if (jaTem) continue
+    const pasta = `${raizOnline}\\${agenda.pasta}`
+    if (Object.values(get(mediaFolders)).some((f: any) => f.path === pasta)) return false
 
-        mediaFolders.update((a) => {
-            a[uid()] = { name: nome, path: caminho, icon: "folder", default: false }
-            return a
-        })
-        mudou = true
-    }
-    return mudou
+    mediaFolders.update((a) => {
+        a[uid()] = { name: agenda.pasta, path: pasta, icon: "folder", default: false }
+        return a
+    })
+    return true
 }
 
 /** "2026-09-06" -> pastas Alianca/2026/09-setembro + projeto "06" */
@@ -684,7 +766,7 @@ const MESES = ["01-janeiro", "02-fevereiro", "03-marco", "04-abril", "05-maio", 
 function caminhoDoculto(cultoId: string) {
     const data = cultoId.match(/^(\d{4})-(\d{2})-(\d{2})$/)
     if (!data) return null
-    return { pastas: ["Alianca", data[1], MESES[Number(data[2]) - 1]], projeto: data[3] }
+    return { pastas: [agenda.pasta, data[1], MESES[Number(data[2]) - 1]], projeto: data[3] }
 }
 
 /**
@@ -696,18 +778,45 @@ function caminhoDoculto(cultoId: string) {
  * ficava cheio de buracos: so o domingo com foto aparecia. Com a arvore pronta
  * o operador encontra qualquer culto pelo calendario, tenha conteudo ou nao.
  */
-function domingosDoMes(ano: number, mes: number) {
+/**
+ * Os dias de culto de um mes, na cadencia da agenda.
+ *
+ * Alianca cai todo domingo; Impulso, a cada quinze dias no sabado, contados a
+ * partir de uma data ancora -- sem ela nao daria para saber QUAL sabado, ja
+ * que a cada quinze dias sao dois sabados possiveis.
+ */
+function diasDoMes(ano: number, mes: number) {
     const dias: string[] = []
-    const d = new Date(ano, mes, 1)
-    d.setDate(1 + ((7 - d.getDay()) % 7))
-    while (d.getMonth() === mes) {
+
+    // evento avulso nao tem data certa: quem cria e o operador, pelo "+"
+    if (!agenda.cada) return dias
+
+    if (agenda.cada === 7) {
+        const d = new Date(ano, mes, 1)
+        d.setDate(1 + ((7 - d.getDay() + agenda.dia) % 7))
+        while (d.getMonth() === mes) {
+            dias.push(String(d.getDate()).padStart(2, "0"))
+            d.setDate(d.getDate() + 7)
+        }
+        return dias
+    }
+
+    const [a, m, dia] = agenda.inicio.split("-").map(Number)
+    const ancora = new Date(a, m - 1, dia)
+    const primeiro = new Date(ano, mes, 1)
+
+    // anda da ancora ate o mes pedido, para tras ou para frente
+    const passos = Math.floor((primeiro.getTime() - ancora.getTime()) / (agenda.cada * 86400000))
+    const d = new Date(ancora)
+    d.setDate(d.getDate() + passos * agenda.cada)
+    while (d < primeiro) d.setDate(d.getDate() + agenda.cada)
+
+    while (d.getMonth() === mes && d.getFullYear() === ano) {
         dias.push(String(d.getDate()).padStart(2, "0"))
-        d.setDate(d.getDate() + 7)
+        d.setDate(d.getDate() + agenda.cada)
     }
     return dias
 }
-
-let pastasNoDiscoFeitas = false
 
 function garantirEstruturaCompleta() {
     let mudou = false
@@ -716,12 +825,12 @@ function garantirEstruturaCompleta() {
     const caminhos: string[] = []
 
     for (let mes = 0; mes < 12; mes++) {
-        const { id: pastaMes, mudou: m1 } = garantirPastas(["Alianca", String(ano), MESES[mes]])
+        const { id: pastaMes, mudou: m1 } = garantirPastas([agenda.pasta, String(ano), MESES[mes]])
         mudou = mudou || m1
-        for (const dia of domingosDoMes(ano, mes)) {
+        for (const dia of diasDoMes(ano, mes)) {
             const { mudou: m2 } = garantirProjeto(dia, pastaMes)
             mudou = mudou || m2
-            caminhos.push(`Alianca/${ano}/${MESES[mes]}/${dia}`)
+            caminhos.push(`${agenda.pasta}/${ano}/${MESES[mes]}/${dia}`)
         }
     }
 
@@ -833,7 +942,7 @@ async function apagarOsQueSairamDoProjeto() {
 
         Object.entries(mapa).forEach(([referencia, chave]) => {
             if (ids.has(referencia)) return
-            escritas[`cultos/${cultoId}/itens/${chave}`] = null
+            escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
             fora.add(`${cultoId}/${chave}`)
             aEsquecer.push({ culto: cultoId, referencia })
         })
@@ -1048,7 +1157,7 @@ async function publicarLocais(cultos: { [id: string]: any }) {
     const ano = new Date().getFullYear()
 
     for (let mes = 0; mes < 12; mes++) {
-        for (const dia of domingosDoMes(ano, mes)) {
+        for (const dia of diasDoMes(ano, mes)) {
             const cultoId = `${ano}-${String(mes + 1).padStart(2, "0")}-${dia}`
             const partes = caminhoDoculto(cultoId)
             if (!partes) continue
@@ -1089,13 +1198,13 @@ async function publicarLocais(cultos: { [id: string]: any }) {
                     publicados.delete(referencia)
                     // publicado antes de existir a marca de computador: assume
                     // agora, senao ninguem poderia limpa-lo depois
-                    if (!publicado.de) escritas[`cultos/${cultoId}/itens/${publicado.chave}/porComputador`] = meuId
+                    if (!publicado.de) escritas[`${caminho("cultos")}/${cultoId}/itens/${publicado.chave}/porComputador`] = meuId
                     return
                 }
                 if (doRemote.has(referencia)) return
 
-                escritas[`cultos/${cultoId}/data`] = cultoId
-                escritas[`cultos/${cultoId}/itens/${chaveLocal(referencia)}`] = {
+                escritas[`${caminho("cultos")}/${cultoId}/data`] = cultoId
+                escritas[`${caminho("cultos")}/${cultoId}/itens/${chaveLocal(referencia)}`] = {
                     nome: nomeDoItemLocal(entrada).slice(0, 60),
                     tipo: "local",
                     midia: entrada.type || "show",
@@ -1116,7 +1225,7 @@ async function publicarLocais(cultos: { [id: string]: any }) {
             // apaga e quem montou
             publicados.forEach(({ chave, de }) => {
                 if (de && de !== meuId) return
-                escritas[`cultos/${cultoId}/itens/${chave}`] = null
+                escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
             })
 
             // O mesmo para o que veio do celular. Antes a remocao so andava num
@@ -1126,7 +1235,7 @@ async function publicarLocais(cultos: { [id: string]: any }) {
             // ainda nao sincronizado, nao esta no mapa e nao corre risco.
             Object.entries(chavesPorRef[cultoId] || {}).forEach(([referencia, chave]) => {
                 if (idsNoProjeto.has(referencia)) return
-                escritas[`cultos/${cultoId}/itens/${chave}`] = null
+                escritas[`${caminho("cultos")}/${cultoId}/itens/${chave}`] = null
                 delete chavesPorRef[cultoId][referencia]
             })
         }
