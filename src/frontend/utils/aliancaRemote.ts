@@ -787,8 +787,11 @@ async function sincronizar(cultos: { [id: string]: any }) {
         // de qual entrada do banco veio cada id do projeto: e o que permite
         // apagar no celular o item que o operador tirou do culto aqui
         const chaves: { [ref: string]: string } = {}
-        const anotar = (ref: string) => {
-            if (ref) chaves[ref] = item.chaveNoBanco
+        // a chave vem por parametro: escrita como fechamento sobre o "item" do
+        // laco abaixo, a funcao procurava um nome que ainda nao existia no
+        // escopo dela e derrubava a sincronizacao inteira na primeira chamada
+        const anotar = (ref: string, chave: string) => {
+            if (ref) chaves[ref] = chave
         }
 
         for (const item of itens) {
@@ -799,7 +802,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
                 const showId = await criarShowDeVersiculo(item, projetoId)
                 if (showId) {
                     daqui.push(showId)
-                    anotar(showId)
+                    anotar(showId, item.chaveNoBanco)
                     if (adicionarAoProjeto(projetoId, { id: showId, type: "show" }, showId)) mudou = true
                 }
                 continue
@@ -811,14 +814,14 @@ async function sincronizar(cultos: { [id: string]: any }) {
             if (item.tipo === "local") {
                 if (item.ref) {
                     daqui.push(item.ref)
-                    anotar(item.ref)
+                    anotar(item.ref, item.chaveNoBanco)
                 }
                 continue
             }
 
             if (item.tipo === "musica") {
                 daqui.push(item.showId)
-                anotar(item.showId)
+                anotar(item.showId, item.chaveNoBanco)
                 if (adicionarAoProjeto(projetoId, { id: item.showId, type: "show" }, item.showId)) mudou = true
                 continue
             }
@@ -841,7 +844,7 @@ async function sincronizar(cultos: { [id: string]: any }) {
                 continue
             }
             daqui.push(caminhoLocal)
-            anotar(caminhoLocal)
+            anotar(caminhoLocal, item.chaveNoBanco)
 
             const tipoProjeto = item.tipo === "image" ? "image" : item.tipo === "video" ? "video" : "audio"
             if (adicionarAoProjeto(projetoId, { id: caminhoLocal, type: tipoProjeto, name: item.nome }, caminhoLocal)) {
