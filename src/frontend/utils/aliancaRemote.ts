@@ -10,6 +10,9 @@ import { getActiveOutputs } from "../components/helpers/output"
 import { getSlideText } from "../components/edit/scripts/textStyle"
 import { activeProject, activeShow, outputs, outputDisplay, projects, shows, showsCache } from "../stores"
 import { openProjectItem } from "../components/show/project"
+import { getActiveScripturesContent, getScriptureShow, loadJsonBible } from "../components/drawer/bible/scripture"
+import { history } from "../components/helpers/history"
+import { activeScripture, drawerTabsData, scriptureSettings, scriptures } from "../stores"
 import { requestMain, sendMain } from "../IPC/main"
 import { folders, media, mediaFolders, projects, shows } from "../stores"
 import { save } from "./save"
@@ -88,6 +91,7 @@ function iniciar() {
             ouvirComandos()
             observarEstadoDaSaida()
             observarCatalogo()
+            publicarIndiceBiblia()
         } else {
             pararOuvinte?.()
             pararOuvinte = null
@@ -348,6 +352,113 @@ function publicarCatalogo() {
     set(ref(db!, "catalogo"), catalogo).catch((erro) => console.error("Falha ao publicar o catalogo:", erro))
 }
 
+/** a primeira biblia local instalada -- e nela que as referencias sao resolvidas */
+function idDaBibliaLocal() {
+    const todas = get(scriptures) as any
+    return Object.keys(todas).find((id) => !todas[id]?.api && !todas[id]?.collection) || ""
+}
+
+/**
+ * Publica a estrutura da Biblia: nomes dos livros e quantos capitulos cada um.
+ *
+ * O celular precisa disso para montar os seletores, e nao tem a Biblia. Pelo
+ * mesmo motivo do catalogo de musicas: quem tem a informacao e quem publica --
+ * manter essa lista a mao foi o que fez louvor sumir sem explicacao.
+ *
+ * So a estrutura, nao o texto. O versiculo e resolvido aqui na hora de montar
+ * o show, e publicar a NVI inteira seria outro tamanho de problema.
+ */
+let ultimoIndiceBiblia = ""
+
+async function publicarIndiceBiblia() {
+    if (!db || !estado.ligado) return
+
+    const bibliaId = idDaBibliaLocal()
+    if (!bibliaId) return
+
+    const biblia = await loadJsonBible(bibliaId)
+    const livros = ((biblia?.data as any)?.books || []).map((livro: any) => ({
+        nome: livro.name || "",
+        capitulos: (livro.chapters || []).length
+    }))
+    if (!livros.length) return
+
+    const indice = { versao: (get(scriptures) as any)[bibliaId]?.name || "", livros }
+
+    const assinatura = JSON.stringify(indice)
+    if (assinatura === ultimoIndiceBiblia) return
+    ultimoIndiceBiblia = assinatura
+
+    set(ref(db!, "biblia"), indice).catch((erro) => console.error("Falha ao publicar o indice da Biblia:", erro))
+}
+
+/**
+ * Monta o show de um versiculo escolhido no celular.
+ *
+ * Reaproveita o mesmo caminho da aba Biblia (getScriptureShow), em vez de
+ * remontar slides aqui: sao mais de mil linhas de tratamento -- numeracao,
+ * versiculos longos, referencia, template -- que nao valem ser duplicadas.
+ *
+ * Para isso a referencia precisa estar em activeScripture, que e estado de
+ * interface. E emprestado e devolvido em seguida.
+ *
+ * O id do show e derivado da referencia, entao sincronizar de novo sobrescreve
+ * o mesmo show em vez de encher a biblioteca de copias.
+ */
+async function criarShowDeVersiculo(item: any, projetoId: string) {
+    const versiculos: number[] = Array.isArray(item.versiculos) ? item.versiculos : []
+    if (!versiculos.length) return ""
+
+    const showId = `bib-${item.livro}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
+
+    // ja existe: so referenciar
+    if (get(shows)[showId]) return showId
+
+    const bibliaId = idDaBibliaLocal()
+    if (!bibliaId) {
+        console.warn("AliancaShow Remote: nenhuma Biblia local instalada, versiculo ignorado")
+        return ""
+    }
+
+    const refAnterior = get(activeScripture)
+    const abaAnterior = (get(drawerTabsData) as any).scripture?.activeSubTab
+    const porSlideAnterior = get(scriptureSettings).versesPerSlide
+
+    try {
+        // regra do AliancaShow: um versiculo por slide
+        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: 1 }))
+        drawerTabsData.update((a: any) => {
+            if (!a.scripture) a.scripture = {}
+            a.scripture.activeSubTab = bibliaId
+            return a
+        })
+        activeScripture.set({ id: bibliaId, reference: { book: item.livro, chapters: [item.capitulo], verses: [versiculos] } })
+
+        const conteudo = await getActiveScripturesContent([versiculos])
+        const show = await getScriptureShow(conteudo)
+        if (!show) return ""
+
+        history({
+            id: "UPDATE",
+            oldData: { id: showId },
+            newData: { data: show, remember: { project: projetoId } },
+            location: { page: "show", id: "show" }
+        })
+
+        return showId
+    } catch (erro) {
+        console.error("Falha ao montar o versiculo:", erro)
+        return ""
+    } finally {
+        activeScripture.set(refAnterior)
+        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: porSlideAnterior }))
+        drawerTabsData.update((a: any) => {
+            if (a.scripture) a.scripture.activeSubTab = abaAnterior
+            return a
+        })
+    }
+}
+
 function observarCatalogo() {
     if (pararCatalogo) return
     // a biblioteca muda pouco; a comparacao de assinatura evita escrita a toa
@@ -571,6 +682,15 @@ async function sincronizar(cultos: { [id: string]: any }) {
         pedidos[cultoId] = daqui
 
         for (const item of itens) {
+            if (item.tipo === "biblia") {
+                const showId = await criarShowDeVersiculo(item, projetoId)
+                if (showId) {
+                    daqui.push(showId)
+                    if (adicionarAoProjeto(projetoId, { id: showId, type: "show" }, showId)) mudou = true
+                }
+                continue
+            }
+
             if (item.tipo === "musica") {
                 daqui.push(item.showId)
                 if (adicionarAoProjeto(projetoId, { id: item.showId, type: "show" }, item.showId)) mudou = true
