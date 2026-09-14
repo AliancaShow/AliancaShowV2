@@ -647,9 +647,10 @@ let vindosDoRemote: { [culto: string]: string[] } = {}
 /**
  * Qual entrada do banco gerou cada item do projeto, culto a culto.
  *
- * Fica so na memoria: e reconstruido a cada sincronizacao, e sem ele nao da
- * para saber qual item do celular apagar quando o operador tira um do culto
- * aqui no computador.
+ * Guardado junto do registro, e nao so na memoria: remover um item do culto
+ * com o app fechado e o caso comum, e um mapa que nasce vazio a cada abertura
+ * nao teria como saber o que apagar -- a sincronizacao leria o banco, veria o
+ * item pedido e o traria de volta para o projeto.
  */
 let chavesPorRef: { [culto: string]: { [ref: string]: string } } = {}
 let registroCarregado = false
@@ -658,10 +659,12 @@ async function carregarRegistro() {
     if (registroCarregado) return
     registroCarregado = true
     vindosDoRemote = (await requestMain(Main.GET_STORE_VALUE, { file: "config", key: "aliancaVindosDoRemote" })) || {}
+    chavesPorRef = (await requestMain(Main.GET_STORE_VALUE, { file: "config", key: "aliancaChavesPorRef" })) || {}
 }
 
 function guardarRegistro() {
     sendMain(Main.SET_STORE_VALUE, { file: "config", key: "aliancaVindosDoRemote", value: vindosDoRemote })
+    sendMain(Main.SET_STORE_VALUE, { file: "config", key: "aliancaChavesPorRef", value: chavesPorRef })
 }
 
 /** o arquivo so sai do disco se nenhum outro projeto ainda apontar para ele */
@@ -701,11 +704,63 @@ function tirarDoProjeto(cultoId: string, sumiram: string[]) {
     return true
 }
 
+/**
+ * Apaga do banco o que o operador tirou do culto aqui no computador.
+ *
+ * Roda ANTES de ler os itens: feito depois, a leitura ainda veria o item
+ * pedido no banco e o traria de volta para o projeto -- foi o que acontecia
+ * quando a remocao era feita com o app fechado.
+ *
+ * Devolve as entradas apagadas, para que esta mesma rodada as ignore.
+ */
+async function apagarOsQueSairamDoProjeto() {
+    const fora = new Set<string>()
+    if (!db || !estado.ligado) return fora
+
+    const escritas: { [caminho: string]: null } = {}
+    const aEsquecer: { culto: string; referencia: string }[] = []
+
+    for (const [cultoId, mapa] of Object.entries(chavesPorRef)) {
+        const partes = caminhoDoculto(cultoId)
+        if (!partes) continue
+
+        const projetoId = garantirProjeto(partes.projeto, garantirPastas(partes.pastas).id).id
+        const projeto = get(projects)[projetoId] as any
+        // projeto que ainda nao existe nao e projeto vazio
+        if (!projeto) continue
+
+        const ids = new Set(((projeto.shows || []) as any[]).map((entrada) => String(entrada?.id || "")))
+
+        Object.entries(mapa).forEach(([referencia, chave]) => {
+            if (ids.has(referencia)) return
+            escritas[`cultos/${cultoId}/itens/${chave}`] = null
+            fora.add(`${cultoId}/${chave}`)
+            aEsquecer.push({ culto: cultoId, referencia })
+        })
+    }
+
+    if (!Object.keys(escritas).length) return fora
+
+    try {
+        await update(ref(db!, "/"), escritas)
+    } catch (erro) {
+        // sem apagar de la, ignorar os itens aqui deixaria os dois lados
+        // discordando: melhor nao mexer e tentar na proxima volta
+        console.error("Falha ao apagar do celular o que saiu do culto:", erro)
+        return new Set<string>()
+    }
+
+    aEsquecer.forEach(({ culto, referencia }) => delete chavesPorRef[culto]?.[referencia])
+    return fora
+}
+
 async function sincronizar(cultos: { [id: string]: any }) {
     await carregarRegistro()
 
     let mudou = await garantirPastasDeMidia()
     mudou = garantirEstruturaCompleta() || mudou
+
+    const removidosAqui = await apagarOsQueSairamDoProjeto()
 
     // o que o Remote pede AGORA, culto a culto -- a diferenca para o registro
     // anterior e exatamente o que alguem removeu pelo celular
@@ -737,6 +792,9 @@ async function sincronizar(cultos: { [id: string]: any }) {
         }
 
         for (const item of itens) {
+            // acabou de sair do culto aqui: ja foi apagado do banco acima
+            if (removidosAqui.has(`${cultoId}/${item.chaveNoBanco}`)) continue
+
             if (item.tipo === "biblia") {
                 const showId = await criarShowDeVersiculo(item, projetoId)
                 if (showId) {
@@ -818,9 +876,13 @@ async function sincronizar(cultos: { [id: string]: any }) {
         if (tirarDoProjeto(cultoId, sumiram)) mudou = true
     }
 
-    const antes = JSON.stringify(vindosDoRemote)
+    Object.keys(chavesPorRef).forEach((cultoId) => {
+        if (!cultos[cultoId]?.itens) delete chavesPorRef[cultoId]
+    })
+
+    const antes = JSON.stringify([vindosDoRemote, chavesPorRef])
     vindosDoRemote = pedidos
-    if (JSON.stringify(pedidos) !== antes) guardarRegistro()
+    if (JSON.stringify([pedidos, chavesPorRef]) !== antes) guardarRegistro()
 
     ultimaFotoCultos = cultos
     await publicarLocais(cultos)
