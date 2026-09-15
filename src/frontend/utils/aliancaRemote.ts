@@ -8,14 +8,13 @@ import { OutputHelper } from "../components/helpers/OutputHelper"
 import { clearAll } from "../components/output/clear"
 import { getActiveOutputs } from "../components/helpers/output"
 import { getSlideText } from "../components/edit/scripts/textStyle"
-import { activeProject, activeShow, outputs, outputDisplay, projects, shows, showsCache } from "../stores"
+import { activeProject, activeShow, folders, media, mediaFolders, outputs, outputDisplay, projects, shows, showsCache } from "../stores"
 import { openProjectItem } from "../components/show/project"
 import { getActiveScripturesContent, getScriptureShow, loadJsonBible } from "../components/drawer/bible/scripture"
 import { history } from "../components/helpers/history"
 import { loadShows } from "../components/helpers/setShow"
 import { activeScripture, drawerTabsData, scriptureSettings, scriptures } from "../stores"
 import { requestMain, sendMain } from "../IPC/main"
-import { folders, media, mediaFolders, projects, shows } from "../stores"
 import { save } from "./save"
 
 /**
@@ -259,21 +258,50 @@ export async function entrarSalvo() {
 let sincronizando = false
 let proximaFoto: { [id: string]: any } | null = null
 
+/**
+ * Espera entre tentativas, depois de uma falha.
+ *
+ * Antes uma falha era o fim da linha: a fotografia pendente era descartada e
+ * nada reagendava, entao a sincronizacao so voltava a rodar quando alguem
+ * mexesse no banco outra vez -- e ate la, silencio, que foi exatamente o
+ * sintoma do dia 14/09. Com teto, porque erro que nao passa (uma variavel que
+ * nao existe, por exemplo) nao pode virar laco batendo no Firebase.
+ */
+const ESPERAS_APOS_FALHA = [2000, 8000, 30_000]
+
+const esperar = (ms: number) => new Promise((pronto) => setTimeout(pronto, ms))
+
 function enfileirar(cultos: { [id: string]: any }) {
     proximaFoto = cultos
     if (sincronizando) return
     sincronizando = true
     ;(async () => {
+        // contada por episodio: zera ao dar certo, e desistir aqui nao e
+        // definitivo -- a proxima mudanca do banco comeca a contagem de novo
+        let tentativa = 0
+
         try {
             while (proximaFoto) {
                 const atual = proximaFoto
                 proximaFoto = null
-                await sincronizar(atual)
+
+                try {
+                    await sincronizar(atual)
+                    tentativa = 0
+                    publicarDiagnostico("")
+                    continue
+                } catch (e: any) {
+                    console.error("Falha ao sincronizar:", e)
+                    publicarDiagnostico(`${passo}: ${e?.message || e}`)
+                }
+
+                if (tentativa >= ESPERAS_APOS_FALHA.length) break
+                await esperar(ESPERAS_APOS_FALHA[tentativa++])
+
+                // repoe a fotografia que falhou, a menos que uma mais nova
+                // tenha chegado durante a espera: essa manda
+                if (!proximaFoto) proximaFoto = atual
             }
-            publicarDiagnostico("")
-        } catch (e: any) {
-            console.error("Falha ao sincronizar:", e)
-            publicarDiagnostico(`${passo}: ${e?.message || e}`)
         } finally {
             sincronizando = false
         }
@@ -1094,10 +1122,15 @@ async function sincronizar(cultos: { [id: string]: any }) {
             estado.baixando++
             avisar()
 
-            const caminhoLocal: string | null = await requestMain(Main.ALIANCA_BAIXAR, { url: item.url, pasta, arquivo })
-
-            estado.baixando--
-            avisar()
+            // sem o finally, um download que estoura deixava o contador preso
+            // e o painel dizia "baixando" para sempre
+            let caminhoLocal: string | null
+            try {
+                caminhoLocal = await requestMain(Main.ALIANCA_BAIXAR, { url: item.url, pasta, arquivo })
+            } finally {
+                estado.baixando--
+                avisar()
+            }
 
             // download falho deixa a lista incompleta; sem esta marca o item
             // seria lido como removido e sairia do projeto na volta seguinte

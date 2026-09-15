@@ -314,7 +314,7 @@ export class PowerPointPackage {
         if (!presentation) return []
         console.log("Presentation:", presentation)
 
-        const slides: ReturnType<typeof this.getSlide>[] = []
+        const slides: ReturnType<PowerPointPackage["getSlide"]>[] = []
 
         for (const target of presentation.slideOrder) {
             const slide = this.getSlide(presentation, target)
