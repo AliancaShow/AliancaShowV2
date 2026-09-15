@@ -598,10 +598,28 @@ function publicarCatalogo() {
     })
 }
 
-/** a primeira biblia local instalada -- e nela que as referencias sao resolvidas */
-function idDaBibliaLocal() {
+/** toda Biblia instalada aqui: as de API e as colecoes nao servem */
+function bibliasLocais() {
     const todas = get(scriptures) as any
-    return Object.keys(todas).find((id) => !todas[id]?.api && !todas[id]?.collection) || ""
+    return Object.keys(todas).filter((id) => !todas[id]?.api && !todas[id]?.collection)
+}
+
+/** a primeira instalada: e a padrao de quem nao escolheu versao */
+function idDaBibliaLocal() {
+    return bibliasLocais()[0] || ""
+}
+
+/**
+ * Em qual Biblia resolver o versiculo que o celular mandou.
+ *
+ * A escolha vem no item. Mas nao se confia nela: a versao pode ter sido
+ * desinstalada aqui depois do envio, e resolver numa Biblia que nao existe
+ * derrubaria a sincronizacao inteira por causa de um item.
+ */
+function versaoDoItem(item: any) {
+    const pedida = String(item?.versao || "")
+    if (pedida && bibliasLocais().includes(pedida)) return pedida
+    return idDaBibliaLocal()
 }
 
 /**
@@ -613,23 +631,41 @@ function idDaBibliaLocal() {
  *
  * So a estrutura, nao o texto. O versiculo e resolvido aqui na hora de montar
  * o show, e publicar a NVI inteira seria outro tamanho de problema.
+ *
+ * Sai uma entrada por Biblia instalada, em "versoes", para o celular poder
+ * escolher. Os campos antigos ("versao" e "livros", da primeira instalada)
+ * continuam publicados: um celular que ainda nao recarregou o Remote le so
+ * eles, e precisa seguir funcionando.
+ *
+ * Cada versao traz a PROPRIA lista de livros, e nao uma lista comum: o celular
+ * manda a POSICAO do livro, nao o nome, entao duas Biblias com ordem ou
+ * quantidade diferente de livros trocariam a referencia em silencio.
  */
 let ultimoIndiceBiblia = ""
 
 async function publicarIndiceBiblia() {
     if (!db || !estado.ligado || !souPrincipal()) return
 
-    const bibliaId = idDaBibliaLocal()
-    if (!bibliaId) return
+    const locais = bibliasLocais()
+    if (!locais.length) return
 
-    const biblia = await loadJsonBible(bibliaId)
-    const livros = ((biblia?.data as any)?.books || []).map((livro: any) => ({
-        nome: livro.name || "",
-        capitulos: (livro.chapters || []).length
-    }))
-    if (!livros.length) return
+    const todas = get(scriptures) as any
+    const versoes: { [id: string]: { nome: string; livros: any[] } } = {}
 
-    const indice = { versao: (get(scriptures) as any)[bibliaId]?.name || "", livros }
+    for (const id of locais) {
+        const biblia = await loadJsonBible(id)
+        const livros = ((biblia?.data as any)?.books || []).map((livro: any) => ({
+            nome: livro.name || "",
+            capitulos: (livro.chapters || []).length
+        }))
+        if (livros.length) versoes[id] = { nome: todas[id]?.name || id, livros }
+    }
+
+    const padrao = locais.find((id) => versoes[id])
+    if (!padrao) return
+
+    const livros = versoes[padrao].livros
+    const indice = { versao: versoes[padrao].nome, livros, versoes }
 
     const assinatura = JSON.stringify(indice)
     if (assinatura === ultimoIndiceBiblia) return
@@ -660,7 +696,7 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
     const versiculos: number[] = Array.isArray(item.versiculos) ? item.versiculos : []
     if (!versiculos.length) return ""
 
-    const bibliaId = idDaBibliaLocal()
+    const bibliaId = versaoDoItem(item)
     if (!bibliaId) {
         console.warn("AliancaShow Remote: nenhuma Biblia local instalada, versiculo ignorado")
         return ""
@@ -674,7 +710,11 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
     const biblia = await loadJsonBible(bibliaId)
     const livroNumero = Number((biblia?.data as any)?.books?.[item.livro]?.number ?? Number(item.livro) + 1)
 
-    const showId = `bib-${livroNumero}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
+    // A versao entra no id. Sem ela, Genesis 1:1-10 na NVI e na ARA disputavam
+    // o mesmo show: o primeiro a chegar vencia, e o reaproveitamento logo
+    // abaixo devolvia a versao errada para quem pediu a outra -- calado, porque
+    // a contagem de slides bate nas duas.
+    const showId = `bib-${bibliaId}-${livroNumero}-${item.capitulo}-${versiculos[0]}-${versiculos[versiculos.length - 1]}`
 
     // Ja existe: so referenciar, desde que tenha um slide por versiculo. Um
     // show montado por uma versao anterior -- quando o agrupamento por tamanho
