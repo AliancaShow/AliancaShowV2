@@ -649,7 +649,9 @@ async function publicarIndiceBiblia() {
  * versiculos longos, referencia, template -- que nao valem ser duplicadas.
  *
  * Para isso a referencia precisa estar em activeScripture, que e estado de
- * interface. E emprestado e devolvido em seguida.
+ * interface. E emprestado e devolvido em seguida -- so que a devolucao confere
+ * antes se aquilo ainda e nosso, porque o operador esta usando o app enquanto
+ * isto roda (ver o finally no fim da funcao).
  *
  * O id do show e derivado da referencia, entao sincronizar de novo sobrescreve
  * o mesmo show em vez de encher a biblioteca de copias.
@@ -686,6 +688,9 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
         if ((leiaute?.slides?.length || 0) === versiculos.length) return showId
     }
 
+    // o que foi emprestado, para reconhecer na devolucao o que ainda e nosso
+    let emprestada: any = null
+
     const refAnterior = get(activeScripture)
     const abaAnterior = (get(drawerTabsData) as any).scripture?.activeSubTab
     const porSlideAnterior = get(scriptureSettings).versesPerSlide
@@ -702,7 +707,8 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
             a.scripture.activeSubTab = bibliaId
             return a
         })
-        activeScripture.set({ id: bibliaId, reference: { book: livroNumero, chapters: [item.capitulo], verses: [versiculos] } })
+        emprestada = { id: bibliaId, reference: { book: livroNumero, chapters: [item.capitulo], verses: [versiculos] } }
+        activeScripture.set(emprestada)
 
         const conteudo = await getActiveScripturesContent([versiculos])
         const show = await getScriptureShow(conteudo)
@@ -724,10 +730,24 @@ async function criarShowDeVersiculo(item: any, projetoId: string) {
         console.error("Falha ao montar o versiculo:", erro)
         return ""
     } finally {
-        activeScripture.set(refAnterior)
-        scriptureSettings.update((a: any) => ({ ...a, versesPerSlide: porSlideAnterior, smartSplit: agrupamentoAnterior }))
+        // Devolver as cegas desfazia o que o operador tivesse mexido enquanto
+        // o versiculo era montado: isto roda em segundo plano, com ele usando
+        // o app. Entao so volta atras o que ainda esta como deixamos.
+        //
+        // O limite honesto: se ele escolher justamente 1 por slide nessa
+        // fresta, a escolha dele e desfeita. Fica assim de proposito -- o
+        // contrario, deixar o 1 forcado gravado, mudaria calado como TODO
+        // versiculo dele sai dali em diante.
+        if (get(activeScripture) === emprestada) activeScripture.set(refAnterior)
+
+        scriptureSettings.update((a: any) => ({
+            ...a,
+            versesPerSlide: a.versesPerSlide === 1 ? porSlideAnterior : a.versesPerSlide,
+            smartSplit: a.smartSplit === false ? agrupamentoAnterior : a.smartSplit
+        }))
+
         drawerTabsData.update((a: any) => {
-            if (a.scripture) a.scripture.activeSubTab = abaAnterior
+            if (a.scripture?.activeSubTab === bibliaId) a.scripture.activeSubTab = abaAnterior
             return a
         })
     }
