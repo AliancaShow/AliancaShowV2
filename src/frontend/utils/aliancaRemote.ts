@@ -85,6 +85,9 @@ export async function escolherAgenda(id: string) {
     chavesPorRef = {}
     guardarRegistro()
 
+    // a arvore no disco e por culto: a do Impulso ainda nao existe
+    pastasNoDiscoFeitas = false
+
     estado.agenda = nova.id
     avisar()
 
@@ -852,6 +855,15 @@ function diasDoMes(ano: number, mes: number) {
     }
     return dias
 }
+
+/**
+ * A arvore no disco ja foi pedida para o culto de agora.
+ *
+ * Criar as pastas do ano inteiro e caro e basta uma vez por sessao -- mas uma
+ * vez POR CULTO: cada agenda tem sua propria pasta raiz, entao trocar para o
+ * Impulso zera isto (ver escolherAgenda) para que as pastas dele tambem nascam.
+ */
+let pastasNoDiscoFeitas = false
 
 function garantirEstruturaCompleta() {
     let mudou = false
